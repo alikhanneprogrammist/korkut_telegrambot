@@ -1,0 +1,43 @@
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Определяем директорию, где находится этот файл
+BASE_DIR = Path(__file__).resolve().parent
+
+# Загружаем переменные окружения из .env файла в той же директории
+load_dotenv(BASE_DIR / '.env')
+
+# Токен бота (получить у @BotFather)
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN', '')
+
+# ID канала (можно получить через @userinfobot или через API)
+# Для приватного канала используйте формат: -1001234567890
+CHANNEL_ID = int(os.getenv('CHANNEL_ID', '0'))
+
+# Ссылка на канал (пригласительная ссылка)
+CHANNEL_LINK = os.getenv('CHANNEL_LINK', '')
+
+# ID администратора (ваш Telegram ID)
+ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
+
+# === Robokassa ===
+# Идентификатор магазина в Robokassa
+ROBOKASSA_MERCHANT_LOGIN = os.getenv('ROBOKASSA_MERCHANT_LOGIN', '')
+
+# Пароль #1 (для формирования подписи запроса на оплату)
+ROBOKASSA_PASSWORD_1 = os.getenv('ROBOKASSA_PASSWORD_1', '')
+
+# Пароль #2 (для проверки подписи уведомления об оплате)
+ROBOKASSA_PASSWORD_2 = os.getenv('ROBOKASSA_PASSWORD_2', '')
+
+# Тестовый режим Robokassa (True - тестовый, False - боевой)
+ROBOKASSA_TEST_MODE = os.getenv('ROBOKASSA_TEST_MODE', 'True').lower() in ('true', '1', 'yes')
+
+# Цена подписки в тенге
+SUBSCRIPTION_PRICE = int(os.getenv('SUBSCRIPTION_PRICE', '20000'))
+
+# === Postgres ===
+# Строка подключения к БД, например:
+# postgresql+psycopg2://telegram_user:password@localhost:5432/telegram_sales
+DATABASE_URL = os.getenv('DATABASE_URL', '')

@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "careful-ensign-470210-e5",
+  "private_key_id": "86dd9bf9cb4bfea3ff4da10511a12a1e90d8ba1b",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC66NwV+3iYFs8T\nJ5Dg+DZltiNo/DHXQUSaEOaoCDF6x2zouVFxa1gdJOv4ga3koWizbP1sfHTouUU/\nRwL7EK6f5lgOFTaO3NhOfkeby1Oqtiq37KaH1FDCvFJ4RahN5uNeEm0bvvuNeja5\neR3qE63NuycYD/IUTpDzjKd3ZXEAYXnqdYAdC9DgVhg1WSQ+9CDfPguHXB7eN1hN\nSg6fB8PtxvuNFA51Bc5hHRsaFVsw68gepxsHuutcm/7MK9TQMooMDvVg/UQhB0W/\n8s0h3KOzu+e1tYPnb1ddLNQP0AqXYWooM8E8FyuQa4R6Ykru+yjcXajD6+Mzn+xN\nbpLefw5zAgMBAAECggEAD31RvpP0Vqz5OeNQWzHRbD9vvXkSS6jx3aS4lhn2Y8WY\nIyHh0SOYuJ2Wh/soj+cdIqrNxl+lXqNP96JTvxO5rQWtVslvl9+kdhN6rWYTHSAd\n99e++0hfQwF8AidKVIkQXvuURYrfv5tDuBOEpPaUM5WmyT81DCAbXMZTcI5xvXAH\npPC2AuQYCbytNfMFMgXcSHPsKGMSOCUhCqX6IMteS3aH/oyVPGmc0wTxfLabspTc\ni/D1cWoFMgJ3Al6dH1solKiwJS4Dz908LM/Es+ByV9qZy/U/j6u6kSzPwLTX7TFO\nH/pYL6gwU+YPsqqeKgut6XZdhUglib4Ar4HfKKITmQKBgQDdEU3AdqCDM09geCBF\nKW5+7Gw63dWb/Tk+F0jxwsO5xoALPTn69iOLt+g8YVbXStIHLLQhMnVMQxIMH8Wa\nXyAor03OTZLt2N3GFMalKt/zp3loMkMlThHV9nh8dwPaeZbcauewdFpP5p3/rKBz\nA/BaRhbzbzKXA2/r1Pta/ckRSwKBgQDYcclQskzXc+FVgMyoU5K0w6qr+/JQCoKh\nX83/QyeS1JITEgm9eUwtl9UXNLy0aGtSwH77Mro2p3y/yGxhPEpfTAZFKYu1klva\nZupQsNWyRcyI5gM1LcPfTKLv2eEQCf/JM/xD+BrAnoLiGvU4mcvL/ulXgkm4ksjv\nmHfOX3ZmeQKBgDBZ3oWf7I+Fo3DYFUbLPw2nrCxb5KKPifuYoC2wiZqSXeMXax0G\nxNOET9kU+Sdxh+plzqgMHzek28enE1MmRyRe40eiE+bNrgPq+1+Ytw7VrGorxB/e\nqWwA0m12onMgcOyYvUAM0svzBs+q9BTz4Zf9CHwJ8CizacFM/gTyyQ1tAoGAWFyj\npikUS8UIEgMCChoMQ3W6AHpb4ydXSxA0pehBiKT1eYmcpliVq+tXWCD0hOY4IlFp\nxZ1g/h0ERbtJ26xkZGFCEgwy+A5nJ1Nqh0SaCSyLorvcRWKIm2nK/wZA5m5emUJ6\n0zi/mzFbF3mP8OqAk6helJYhCJQMKhxhlMPOL2kCgYEAgeOWq5RMYl7XSuyz/Uox\nZ7StoAglCtxt2yVk8EdWjKvaJddkjicwi4rDA52TITbcL/FQuMA2tkmz6GjiA7j7\nBHVVV/YBZ7regNCAyrcwu5l+MMkj8WI8EqUhR0nb7LZuimCDYeM3GbpTlTfK+NKG\ncSePG5GcWuZV8vrCiZaPxN8=\n-----END PRIVATE KEY-----\n",
+  "client_email": "korkut-ipoteka@careful-ensign-470210-e5.iam.gserviceaccount.com",
+  "client_id": "108442946902549599849",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/korkut-ipoteka%40careful-ensign-470210-e5.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
