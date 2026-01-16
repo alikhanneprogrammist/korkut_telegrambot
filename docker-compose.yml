@@ -6,6 +6,10 @@ services:
     container_name: telegram_sales_bot
     env_file:
       - .env
+    environment:
+      # Если в .env не задать DATABASE_URL, используем подключение к внутреннему Postgres
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://${POSTGRES_USER:-korkut}:${POSTGRES_PASSWORD:-Aman123!}@db:5432/${POSTGRES_DB:-telegram_sales}}
+      PYTHONUNBUFFERED: "1"
     restart: unless-stopped
     depends_on:
       - db

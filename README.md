@@ -94,7 +94,7 @@ ROBOKASSA_TEST_MODE=True
 SUBSCRIPTION_PRICE=20000
 
 # Postgres
-DATABASE_URL=postgresql+psycopg2://telegram_user:password@localhost:5432/telegram_sales
+DATABASE_URL=postgresql+psycopg2://korkut:Aman123!@localhost:5432/telegram_sales
 ```
 
 ### 4. Запустите бота:
