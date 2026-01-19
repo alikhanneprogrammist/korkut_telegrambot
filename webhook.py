@@ -26,8 +26,9 @@ from config import (
     DATABASE_URL,
     CHANNEL_LINK,
     ROBOKASSA_TEST_MODE,
+    RENEWAL_PERIOD_DAYS,
 )
-from bot import verify_payment_signature, TEXTS
+from bot import verify_payment_signature, TEXTS, build_after_payment_keyboard
 from database import Database
 
 load_dotenv()
@@ -106,7 +107,15 @@ async def robokassa_result(request: Request):
     except ValueError:
         amount_float = 0.0
 
-    expires_at = datetime.now() + timedelta(days=30)
+    period_days = RENEWAL_PERIOD_DAYS or 30
+    expires_at = datetime.now() + timedelta(days=period_days)
+
+    # Определяем якорный платеж и следующую дату списания
+    existing = db.get_subscription(int(user_id))
+    anchor_inv_id = existing.get("anchor_inv_id") if existing else None
+    if not anchor_inv_id:
+        anchor_inv_id = int(inv_id)
+    next_charge_at = expires_at
 
     # Фиксируем подписку и платеж
     db.add_subscription(
@@ -114,6 +123,8 @@ async def robokassa_result(request: Request):
         username=f"user_{user_id}",
         expires_at=expires_at,
         payment_amount=amount_float,
+        anchor_inv_id=anchor_inv_id,
+        next_charge_at=next_charge_at,
     )
     db.add_payment(
         user_id=int(user_id),

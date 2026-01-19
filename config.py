@@ -37,6 +37,9 @@ ROBOKASSA_TEST_MODE = os.getenv('ROBOKASSA_TEST_MODE', 'True').lower() in ('true
 # Цена подписки в тенге
 SUBSCRIPTION_PRICE = int(os.getenv('SUBSCRIPTION_PRICE', '20000'))
 
+# Период продления подписки (в днях), для автосписаний
+RENEWAL_PERIOD_DAYS = int(os.getenv('RENEWAL_PERIOD_DAYS', '30'))
+
 # === Postgres ===
 # Строка подключения к БД, например:
 # postgresql+psycopg2://telegram_user:password@localhost:5432/telegram_sales

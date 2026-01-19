@@ -92,6 +92,7 @@ ROBOKASSA_TEST_MODE=True
 
 # Подписка
 SUBSCRIPTION_PRICE=20000
+RENEWAL_PERIOD_DAYS=30
 
 # Postgres
 DATABASE_URL=postgresql+psycopg2://korkut:Aman123!@localhost:5432/telegram_sales

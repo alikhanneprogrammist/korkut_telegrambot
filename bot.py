@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 import pytz
+import httpx
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -39,6 +40,7 @@ from config import (
     ROBOKASSA_PASSWORD_2,
     ROBOKASSA_TEST_MODE,
     SUBSCRIPTION_PRICE,
+    RENEWAL_PERIOD_DAYS,
 )
 
 # Ссылка на договор оферты
@@ -1052,6 +1054,108 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Часовой пояс Казахстана (Алматы)
 TIMEZONE = pytz.timezone('Asia/Almaty')
 
+async def perform_recurring_charge(user_id: int, previous_inv_id: int, amount: float) -> tuple[bool, Optional[str]]:
+    """
+    Запрос на автосписание через Robokassa Recurring.
+    Возвращает (успех, сообщение_ошибки).
+    """
+    out_sum_str = f"{float(amount):.2f}"
+    signature_string = f"{ROBOKASSA_MERCHANT_LOGIN}:{previous_inv_id}:{ROBOKASSA_PASSWORD_1}"
+    signature = hashlib.md5(signature_string.encode()).hexdigest()
+
+    payload = {
+        "MerchantLogin": ROBOKASSA_MERCHANT_LOGIN,
+        "PreviousInvoiceID": previous_inv_id,
+        "OutSum": out_sum_str,
+        "Recurring": "true",
+        "SignatureValue": signature,
+        "Shp_user_id": user_id,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post("https://auth.robokassa.kz/Merchant/Recurring", data=payload)
+        if resp.status_code == 200 and "OK" in resp.text:
+            return True, None
+        return False, f"Recurring failed: {resp.status_code} {resp.text}"
+    except Exception as e:
+        return False, f"Recurring exception: {e}"
+
+
+async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Ежедневное автосписание активных подписок с next_charge_at <= сейчас.
+    """
+    now_local = datetime.now(TIMEZONE)
+    subs = db.get_all_active_subscriptions()
+    for sub in subs:
+        if sub.get("cancel_requested"):
+            continue
+        next_charge_at = sub.get("next_charge_at")
+        anchor_inv_id = sub.get("anchor_inv_id")
+        if not next_charge_at or not anchor_inv_id:
+            continue
+        if next_charge_at > now_local:
+            continue
+
+        user_id = sub["user_id"]
+        success, error = await perform_recurring_charge(user_id, anchor_inv_id, SUBSCRIPTION_PRICE)
+
+        if success:
+            new_expires = now_local + timedelta(days=RENEWAL_PERIOD_DAYS or 30)
+            db.add_payment(
+                user_id=user_id,
+                amount=SUBSCRIPTION_PRICE,
+                currency="KZT",
+                invoice_payload=f"robokassa_recurring_{anchor_inv_id}",
+                inv_id=anchor_inv_id,
+                raw_payload={"previous_invoice_id": anchor_inv_id, "type": "recurring"},
+            )
+            db.renew_subscription(
+                user_id=user_id,
+                expires_at=new_expires,
+                next_charge_at=new_expires,
+                anchor_inv_id=anchor_inv_id,
+            )
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=TEXTS["after_payment"].format(channel_link=CHANNEL_LINK),
+                    reply_markup=build_after_payment_keyboard(),
+                )
+            except Exception as e:
+                logger.warning("Не удалось отправить уведомление об автосписании пользователю %s: %s", user_id, e)
+        else:
+            warn_text = (
+                "❌ Не удалось выполнить автосписание.\n"
+                "Попробуйте оплатить вручную через кнопку ниже."
+            )
+            keyboard = [[InlineKeyboardButton("Оплатить", callback_data="funnel_offer_agreement")]]
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=warn_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                )
+            except Exception as e:
+                logger.warning("Не удалось отправить предупреждение пользователю %s: %s", user_id, e)
+            if ADMIN_ID:
+                try:
+                    await context.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=f"❌ Автосписание не удалось: user={user_id}, err={error}",
+                    )
+                except Exception:
+                    pass
+            # при ошибке попробуем на следующий день
+            next_retry = now_local + timedelta(days=1)
+            db.renew_subscription(
+                user_id=user_id,
+                expires_at=sub["expires_at"],
+                next_charge_at=next_retry,
+                anchor_inv_id=anchor_inv_id,
+            )
+
 
 async def check_expired_subscriptions(context: ContextTypes.DEFAULT_TYPE):
     """
@@ -1242,6 +1346,11 @@ def main():
         check_expired_subscriptions,
         time=dt_time(hour=12, minute=0, second=0, tzinfo=TIMEZONE),
         name="daily_subscription_check"
+    )
+    job_queue.run_daily(
+        process_recurring_charges,
+        time=dt_time(hour=3, minute=0, second=0, tzinfo=TIMEZONE),
+        name="daily_recurring_charge"
     )
     logger.info("📅 Запланирована ежедневная проверка подписок в 12:00")
     

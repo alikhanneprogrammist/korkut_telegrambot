@@ -44,6 +44,22 @@ class Database:
                         """
                     )
                 )
+                conn.execute(
+                    sa.text(
+                        """
+                        ALTER TABLE subscriptions
+                        ADD COLUMN IF NOT EXISTS anchor_inv_id BIGINT
+                        """
+                    )
+                )
+                conn.execute(
+                    sa.text(
+                        """
+                        ALTER TABLE subscriptions
+                        ADD COLUMN IF NOT EXISTS next_charge_at TIMESTAMP
+                        """
+                    )
+                )
             logger.info("Подключено к Postgres")
         except Exception as e:
             logger.error(f"Не удалось подключиться к Postgres: {e}")
@@ -87,7 +103,15 @@ class Database:
     # -------------------
     # Подписки
     # -------------------
-    def add_subscription(self, user_id: int, username: str, expires_at: datetime, payment_amount: float):
+    def add_subscription(
+        self,
+        user_id: int,
+        username: str,
+        expires_at: datetime,
+        payment_amount: float,
+        anchor_inv_id: Optional[int] = None,
+        next_charge_at: Optional[datetime] = None,
+    ):
         """Создать/обновить подписку и пользователя."""
         with self.Session() as s, s.begin():
             s.execute(
@@ -105,11 +129,16 @@ class Database:
             s.execute(
                 sa.text(
                     """
-                    INSERT INTO subscriptions (user_id, expires_at, active, created_at, updated_at)
-                    VALUES (:uid, :exp, TRUE, now(), now())
+                    INSERT INTO subscriptions (user_id, expires_at, active, created_at, updated_at, anchor_inv_id, next_charge_at)
+                    VALUES (:uid, :exp, TRUE, now(), now(), :anchor, :next_charge)
                     """
                 ),
-                {"uid": user_id, "exp": expires_at},
+                {
+                    "uid": user_id,
+                    "exp": expires_at,
+                    "anchor": anchor_inv_id,
+                    "next_charge": next_charge_at,
+                },
             )
         logger.info(f"Подписка создана/обновлена для пользователя {user_id}")
 
@@ -120,7 +149,7 @@ class Database:
                 s.execute(
                     sa.text(
                         """
-                        SELECT user_id, expires_at, active, cancel_requested, cancel_requested_at
+                        SELECT user_id, expires_at, active, cancel_requested, cancel_requested_at, anchor_inv_id, next_charge_at
                         FROM subscriptions
                         WHERE user_id = :uid AND active = TRUE
                         ORDER BY expires_at DESC
@@ -139,6 +168,8 @@ class Database:
                     "active": row["active"],
                     "cancel_requested": row["cancel_requested"],
                     "cancel_requested_at": row["cancel_requested_at"],
+                    "anchor_inv_id": row.get("anchor_inv_id"),
+                    "next_charge_at": row.get("next_charge_at"),
                 }
         return None
 
@@ -167,7 +198,7 @@ class Database:
                 s.execute(
                     sa.text(
                         """
-                        SELECT user_id, expires_at, cancel_requested
+                        SELECT user_id, expires_at, cancel_requested, anchor_inv_id, next_charge_at
                         FROM subscriptions
                         WHERE active = TRUE
                         """
@@ -192,6 +223,35 @@ class Database:
                 {"uid": user_id},
             )
         logger.info(f"Подписка деактивирована для пользователя {user_id}")
+
+    def renew_subscription(
+        self,
+        user_id: int,
+        expires_at: datetime,
+        next_charge_at: Optional[datetime],
+        anchor_inv_id: Optional[int] = None,
+    ):
+        """Обновить сроки активной подписки пользователя."""
+        with self.Session() as s, s.begin():
+            s.execute(
+                sa.text(
+                    """
+                    UPDATE subscriptions
+                    SET expires_at = :exp,
+                        next_charge_at = :next_charge,
+                        anchor_inv_id = COALESCE(anchor_inv_id, :anchor),
+                        updated_at = now()
+                    WHERE user_id = :uid AND active = TRUE
+                    """
+                ),
+                {
+                    "uid": user_id,
+                    "exp": expires_at,
+                    "next_charge": next_charge_at,
+                    "anchor": anchor_inv_id,
+                },
+            )
+        logger.info(f"Подписка обновлена для пользователя {user_id}")
 
     def request_cancel_subscription(self, user_id: int) -> Optional[Dict[str, Any]]:
         """
