@@ -23,6 +23,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     MessageHandler,
     ContextTypes,
+    ChatJoinRequestHandler,
     filters,
 )
 
@@ -222,6 +223,20 @@ def schedule_message_deletion(
     )
 
 
+async def reply_with_cleanup(message_obj, context: ContextTypes.DEFAULT_TYPE, text: str, reply_markup=None, delete_after: int = 300):
+    """Отправить reply_text и удалить через delete_after секунд."""
+    msg = await message_obj.reply_text(text, reply_markup=reply_markup)
+    schedule_message_deletion(context, msg.chat_id, msg.message_id, delete_after)
+    return msg
+
+
+async def bot_send_with_cleanup(context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str, reply_markup=None, delete_after: int = 300):
+    """Отправить сообщение ботом и удалить через delete_after секунд."""
+    msg = await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup)
+    schedule_message_deletion(context, chat_id, msg.message_id, delete_after)
+    return msg
+
+
 def generate_payment_link_manual(
     inv_id: int,
     out_sum: float,
@@ -327,10 +342,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  f"🔗 Ссылка на канал ниже 👇"
         )
         
-        await update.message.reply_text(
-            f"👋 Привет, {user.first_name}!\n\n"
-            f"{status_text}",
-            reply_markup=reply_markup
+        await reply_with_cleanup(
+            update.message,
+            context,
+            f"👋 Привет, {user.first_name}!\n\n{status_text}",
+            reply_markup=reply_markup,
         )
         return
     
@@ -386,9 +402,11 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             [InlineKeyboardButton("🚫 Отключить автоплатёж", callback_data="cancel_subscription")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
+        await reply_with_cleanup(
+            update.message,
+            context,
             "У тебя есть активная подписка! Вот ссылка на канал 👇",
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
         )
         return
     
@@ -790,12 +808,12 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # 7. ПОСЛЕ ОПЛАТЫ - отправляем пользователю
     try:
-        msg = await context.bot.send_message(
-            chat_id=target_user_id,
-            text=TEXTS["after_payment"].format(channel_link=CHANNEL_LINK),
-            reply_markup=build_after_payment_keyboard()
+        msg = await bot_send_with_cleanup(
+            context,
+            target_user_id,
+            TEXTS["after_payment"].format(channel_link=CHANNEL_LINK),
+            reply_markup=build_after_payment_keyboard(),
         )
-        schedule_message_deletion(context, target_user_id, msg.message_id)
     except Exception as e:
         logger.warning(f"Не удалось отправить уведомление пользователю {target_user_id}: {e}")
 
@@ -841,6 +859,13 @@ async def show_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👤 Личный кабинет\n\n"
             f"{describe_subscription(subscription)}"
         )
+        await reply_with_cleanup(
+            message_obj,
+            context,
+            text,
+            reply_markup=build_account_keyboard(subscription),
+        )
+        return
     else:
         text = (
             "👤 Личный кабинет\n\n"
@@ -884,10 +909,11 @@ async def cancel_subscription_action(update: Update, context: ContextTypes.DEFAU
             [InlineKeyboardButton("🔗 Перейти в канал", url=CHANNEL_LINK)],
             [InlineKeyboardButton("👤 Личный кабинет", callback_data="account")],
         ]
-        await message_obj.reply_text(
-            f"🔕 Автоплатёж уже отключён.\n"
-            f"Доступ действует до: {expires_str}.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+        await reply_with_cleanup(
+            message_obj,
+            context,
+            f"🔕 Автоплатёж уже отключён.\nДоступ действует до: {expires_str}.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return
 
@@ -899,12 +925,50 @@ async def cancel_subscription_action(update: Update, context: ContextTypes.DEFAU
         [InlineKeyboardButton("👤 Личный кабинет", callback_data="account")],
     ]
 
-    await message_obj.reply_text(
-        "✅ Автоплатёж отключён.\n"
-        "Списания больше не будут выполняться автоматически.\n"
+    await reply_with_cleanup(
+        message_obj,
+        context,
+        "✅ Автоплатёж отключён.\nСписания больше не будут выполняться автоматически.\n"
         f"Доступ к каналу сохранится до: {expires_str}.",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
+
+
+async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Автоодобрение заявки в канал при активной подписке."""
+    req = update.chat_join_request
+    user_id = req.from_user.id
+    username = req.from_user.username or req.from_user.first_name or "user"
+    subscription = db.get_subscription(user_id)
+
+    if is_subscription_active(subscription):
+        await context.bot.approve_chat_join_request(chat_id=req.chat.id, user_id=user_id)
+        try:
+            await bot_send_with_cleanup(
+                context,
+                user_id,
+                "✅ Доступ в канал подтверждён. Добро пожаловать!",
+            )
+        except Exception as e:
+            logger.warning("Не удалось отправить сообщение после approve %s: %s", user_id, e)
+        logger.info("Join approved: user=%s (%s)", user_id, username)
+        return
+
+    await context.bot.decline_chat_join_request(chat_id=req.chat.id, user_id=user_id)
+    keyboard = [
+        [InlineKeyboardButton("Оформить подписку", callback_data="funnel_offer_agreement")],
+        [InlineKeyboardButton("Узнать подробнее", callback_data="funnel_details")],
+    ]
+    try:
+        await bot_send_with_cleanup(
+            context,
+            user_id,
+            "❌ Заявка отклонена: активной подписки нет.\nОформите подписку, и доступ будет открыт автоматически.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+    except Exception as e:
+        logger.warning("Не удалось отправить отказ пользователю %s: %s", user_id, e)
+    logger.info("Join declined (no active sub): user=%s (%s)", user_id, username)
 
 
 # =====================================================
@@ -933,9 +997,11 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  f"Вот ссылка на канал 👇"
         )
         
-        await update.message.reply_text(
+        await reply_with_cleanup(
+            update.message,
+            context,
             status_text,
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
         )
         return
     
@@ -1004,9 +1070,11 @@ async def check_subscription_cmd(update: Update, context: ContextTypes.DEFAULT_T
                      f"📅 Действует до: {expires_str}"
             )
             
-            await update.message.reply_text(
+            await reply_with_cleanup(
+                update.message,
+                context,
                 status_line,
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
             )
         else:
             keyboard = [[InlineKeyboardButton("👉 Подписка и доступ", callback_data="funnel_offer_agreement")]]
@@ -1150,12 +1218,12 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
                 anchor_inv_id=anchor_inv_id,
             )
             try:
-                msg = await context.bot.send_message(
-                    chat_id=user_id,
-                    text=TEXTS["after_payment"].format(channel_link=CHANNEL_LINK),
+                msg = await bot_send_with_cleanup(
+                    context,
+                    user_id,
+                    TEXTS["after_payment"].format(channel_link=CHANNEL_LINK),
                     reply_markup=build_after_payment_keyboard(),
                 )
-                schedule_message_deletion(context, user_id, msg.message_id)
             except Exception as e:
                 logger.warning("Не удалось отправить уведомление об автосписании пользователю %s: %s", user_id, e)
         else:
@@ -1372,6 +1440,7 @@ def main():
     application.add_handler(CommandHandler("confirm_payment", confirm_payment))
     application.add_handler(CommandHandler("check_subs", manual_check_subscriptions))
     application.add_handler(CommandHandler("help", help_cmd))
+    application.add_handler(ChatJoinRequestHandler(handle_join_request))
     
     # Планировщик: проверка подписок каждый день в 12:00 (время Алматы)
     job_queue = application.job_queue
