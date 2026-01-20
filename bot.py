@@ -191,6 +191,37 @@ def describe_subscription(subscription: dict) -> str:
     )
 
 
+async def delete_message_job(context: ContextTypes.DEFAULT_TYPE):
+    """Удалить сообщение по расписанию (чтобы ссылку нельзя было использовать позже)."""
+    data = context.job.data or {}
+    chat_id = data.get("chat_id")
+    message_id = data.get("message_id")
+    if not chat_id or not message_id:
+        return
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception as e:
+        logger.warning("Не удалось удалить сообщение %s:%s: %s", chat_id, message_id, e)
+
+
+def schedule_message_deletion(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    message_id: int,
+    delay_seconds: int = 300,
+):
+    """Поставить задачу на удаление сообщения с ссылкой."""
+    if not context or not getattr(context, "application", None):
+        return
+    job_queue = context.application.job_queue
+    job_queue.run_once(
+        delete_message_job,
+        when=timedelta(seconds=delay_seconds),
+        data={"chat_id": chat_id, "message_id": message_id},
+        name=f"del_msg_{chat_id}_{message_id}",
+    )
+
+
 def generate_payment_link_manual(
     inv_id: int,
     out_sum: float,
@@ -759,11 +790,12 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # 7. ПОСЛЕ ОПЛАТЫ - отправляем пользователю
     try:
-        await context.bot.send_message(
+        msg = await context.bot.send_message(
             chat_id=target_user_id,
             text=TEXTS["after_payment"].format(channel_link=CHANNEL_LINK),
             reply_markup=build_after_payment_keyboard()
         )
+        schedule_message_deletion(context, target_user_id, msg.message_id)
     except Exception as e:
         logger.warning(f"Не удалось отправить уведомление пользователю {target_user_id}: {e}")
 
@@ -1118,11 +1150,12 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
                 anchor_inv_id=anchor_inv_id,
             )
             try:
-                await context.bot.send_message(
+                msg = await context.bot.send_message(
                     chat_id=user_id,
                     text=TEXTS["after_payment"].format(channel_link=CHANNEL_LINK),
                     reply_markup=build_after_payment_keyboard(),
                 )
+                schedule_message_deletion(context, user_id, msg.message_id)
             except Exception as e:
                 logger.warning("Не удалось отправить уведомление об автосписании пользователю %s: %s", user_id, e)
         else:

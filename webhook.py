@@ -12,6 +12,7 @@ Result URL в кабинете Robokassa:
 Метод: POST
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Dict
@@ -50,6 +51,15 @@ db.init_database()
 bot = Bot(token=TELEGRAM_TOKEN)
 
 app = FastAPI(title="Robokassa Webhook", version="1.0.0")
+
+
+async def delete_message_later(chat_id: int, message_id: int, delay_seconds: int = 300):
+    """Отложенное удаление сообщения с ссылкой, чтобы нельзя было использовать её позже."""
+    await asyncio.sleep(delay_seconds)
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception as e:
+        logger.warning("Не удалось удалить сообщение %s:%s: %s", chat_id, message_id, e)
 
 
 @app.on_event("startup")
@@ -137,11 +147,12 @@ async def robokassa_result(request: Request):
 
     # Отправляем пользователю ссылку на канал и управление автоплатежом
     try:
-        await bot.send_message(
+        msg = await bot.send_message(
             chat_id=int(user_id),
             text=TEXTS["after_payment"].format(channel_link=CHANNEL_LINK),
             reply_markup=build_after_payment_keyboard(),
         )
+        asyncio.create_task(delete_message_later(int(user_id), msg.message_id))
     except Exception as e:
         logger.warning("Не удалось отправить сообщение пользователю %s: %s", user_id, e)
 
