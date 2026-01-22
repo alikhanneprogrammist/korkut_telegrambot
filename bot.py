@@ -9,6 +9,7 @@ Telegram бот для приёма платежей через Robokassa
 import logging
 import hashlib
 import urllib.parse
+import time
 from datetime import datetime, timedelta, time as dt_time
 from pathlib import Path
 from typing import Optional
@@ -296,6 +297,24 @@ def verify_payment_signature(out_sum: str, inv_id: str, signature: str, user_id:
     expected_signature = hashlib.md5(expected_string.encode()).hexdigest().upper()
     
     return signature.upper() == expected_signature
+
+
+def _md5(s: str) -> str:
+    return hashlib.md5(s.encode("utf-8")).hexdigest()
+
+
+def _make_recurring_signature(
+    merchant: str,
+    out_sum: str,
+    inv_id: int,
+    password1: str,
+    shp: dict | None = None,
+) -> str:
+    base = f"{merchant}:{out_sum}:{inv_id}:{password1}"
+    if shp:
+        for k in sorted(shp.keys()):
+            base += f":{k}={shp[k]}"
+    return _md5(base)
 
 
 # =====================================================
@@ -1154,29 +1173,51 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Часовой пояс Казахстана (Алматы)
 TIMEZONE = pytz.timezone('Asia/Almaty')
 
-async def perform_recurring_charge(user_id: int, previous_inv_id: int, amount: float) -> tuple[bool, Optional[str]]:
+async def perform_recurring_charge(
+    user_id: int,
+    previous_inv_id: int,
+    amount: float,
+    *,
+    new_inv_id: int,
+    description: str = "Подписка на канал Korkut Ipoteka",
+) -> tuple[bool, Optional[str]]:
     """
-    Запрос на автосписание через Robokassa Recurring.
-    Возвращает (успех, сообщение_ошибки).
+    Дочерний рекуррентный платёж Robokassa:
+    - InvoiceID: новый уникальный ID
+    - PreviousInvoiceID: якорный (первый успешный) InvoiceID
+    Возвращает (успех_запроса, сообщение_ошибки).
+    Важно: OK от Robokassa = операция создана, а не факт списания.
     """
-    out_sum_str = f"{float(amount):.2f}"
-    signature_string = f"{ROBOKASSA_MERCHANT_LOGIN}:{previous_inv_id}:{ROBOKASSA_PASSWORD_1}"
-    signature = hashlib.md5(signature_string.encode()).hexdigest()
+    out_sum_str = f"{float(amount):.6f}"  # единый формат, как в ссылках
+
+    shp = {"Shp_user_id": str(user_id), "Shp_interface": "link"}
+    signature = _make_recurring_signature(
+        ROBOKASSA_MERCHANT_LOGIN,
+        out_sum_str,
+        new_inv_id,
+        ROBOKASSA_PASSWORD_1,
+        shp=shp,
+    )
 
     payload = {
         "MerchantLogin": ROBOKASSA_MERCHANT_LOGIN,
-        "PreviousInvoiceID": previous_inv_id,
+        "InvoiceID": str(new_inv_id),
+        "PreviousInvoiceID": str(previous_inv_id),
         "OutSum": out_sum_str,
-        "Recurring": "true",
+        "Description": description,
         "SignatureValue": signature,
-        "Shp_user_id": user_id,
+        "Shp_interface": "link",
+        "Shp_user_id": str(user_id),
     }
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.post("https://auth.robokassa.kz/Merchant/Recurring", data=payload)
-        if resp.status_code == 200 and "OK" in resp.text:
+
+        if resp.status_code == 200 and resp.text.strip().startswith("OK"):
+            # OK = операция создана, подтверждение придёт через ResultURL
             return True, None
+
         return False, f"Recurring failed: {resp.status_code} {resp.text}"
     except Exception as e:
         return False, f"Recurring exception: {e}"
@@ -1199,36 +1240,29 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
             continue
 
         user_id = sub["user_id"]
-        success, error = await perform_recurring_charge(user_id, anchor_inv_id, SUBSCRIPTION_PRICE)
+        # генерируем новый InvoiceID (миллисекунды), чтобы избежать коллизий
+        new_inv_id = int(time.time() * 1000) % 2147483647
+        success, error = await perform_recurring_charge(
+            user_id,
+            anchor_inv_id,
+            SUBSCRIPTION_PRICE,
+            new_inv_id=new_inv_id,
+            description="Подписка на канал Korkut Ipoteka",
+        )
 
         if success:
-            new_expires = now_local + timedelta(days=RENEWAL_PERIOD_DAYS or 30)
-            db.add_payment(
-                user_id=user_id,
-                amount=SUBSCRIPTION_PRICE,
-                currency="KZT",
-                invoice_payload=f"robokassa_recurring_{anchor_inv_id}",
-                inv_id=anchor_inv_id,
-                raw_payload={"previous_invoice_id": anchor_inv_id, "type": "recurring"},
-            )
+            # Ждём ResultURL для подтверждения. Чтобы не спамить запросами, двигаем next_charge_at на сутки вперёд.
+            next_retry = now_local + timedelta(days=1)
             db.renew_subscription(
                 user_id=user_id,
-                expires_at=new_expires,
-                next_charge_at=new_expires,
+                expires_at=sub["expires_at"],
+                next_charge_at=next_retry,
                 anchor_inv_id=anchor_inv_id,
             )
-            try:
-                msg = await bot_send_with_cleanup(
-                    context,
-                    user_id,
-                    TEXTS["after_payment"].format(channel_link=CHANNEL_LINK),
-                    reply_markup=build_after_payment_keyboard(),
-                )
-            except Exception as e:
-                logger.warning("Не удалось отправить уведомление об автосписании пользователю %s: %s", user_id, e)
+            logger.info("Recurring запрос отправлен: user=%s anchor=%s new_inv_id=%s", user_id, anchor_inv_id, new_inv_id)
         else:
             warn_text = (
-                "❌ Не удалось выполнить автосписание.\n"
+                "❌ Не удалось отправить запрос на автосписание.\n"
                 "Попробуйте оплатить вручную через кнопку ниже."
             )
             keyboard = [[InlineKeyboardButton("Оплатить", callback_data="funnel_offer_agreement")]]
@@ -1248,7 +1282,6 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
                     )
                 except Exception:
                     pass
-            # при ошибке попробуем на следующий день
             next_retry = now_local + timedelta(days=1)
             db.renew_subscription(
                 user_id=user_id,

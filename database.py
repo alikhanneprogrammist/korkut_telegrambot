@@ -126,6 +126,17 @@ class Database:
                 ),
                 {"uid": user_id, "uname": username},
             )
+            # деактивируем предыдущие активные, чтобы была единственная активная подписка
+            s.execute(
+                sa.text(
+                    """
+                    UPDATE subscriptions
+                    SET active = FALSE, updated_at = now()
+                    WHERE user_id = :uid AND active = TRUE
+                    """
+                ),
+                {"uid": user_id},
+            )
             s.execute(
                 sa.text(
                     """
@@ -217,7 +228,7 @@ class Database:
                     """
                     UPDATE subscriptions
                     SET active = FALSE, updated_at = now()
-                    WHERE user_id = :uid
+                    WHERE user_id = :uid AND active = TRUE
                     """
                 ),
                 {"uid": user_id},
@@ -239,7 +250,7 @@ class Database:
                     UPDATE subscriptions
                     SET expires_at = :exp,
                         next_charge_at = :next_charge,
-                        anchor_inv_id = COALESCE(anchor_inv_id, :anchor),
+                        anchor_inv_id = COALESCE(:anchor, anchor_inv_id),
                         updated_at = now()
                     WHERE user_id = :uid AND active = TRUE
                     """
@@ -306,8 +317,17 @@ class Database:
         """Пытаемся вытащить числовой inv_id из строки payload."""
         if not invoice_payload:
             return None
-        match = re.search(r"(\\d+)", invoice_payload)
+        match = re.search(r"(\d+)", invoice_payload)
         return int(match.group(1)) if match else None
+
+    def payment_exists(self, inv_id: int) -> bool:
+        """Проверить, есть ли уже платёж с этим inv_id."""
+        with self.Session() as s:
+            row = s.execute(
+                sa.text("SELECT 1 FROM payments WHERE inv_id = :inv LIMIT 1"),
+                {"inv": inv_id},
+            ).first()
+            return bool(row)
 
     def add_payment(
         self,

@@ -14,7 +14,7 @@ Result URL в кабинете Robokassa:
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict
 
 from fastapi import FastAPI, HTTPException, Request, status
@@ -82,18 +82,25 @@ async def health():
 async def robokassa_result(request: Request):
     """
     Обработка Result URL от Robokassa.
-    Требуемые поля: OutSum, InvId, SignatureValue, Shp_user_id.
+    Требуемые поля: OutSum, InvId, SignatureValue, Shp_user_id, Shp_interface.
     """
     form = await request.form()
     payload = _form_to_dict(form)
 
-    required = ["OutSum", "InvId", "SignatureValue", "Shp_user_id"]
+    required = ["OutSum", "InvId", "SignatureValue", "Shp_user_id", "Shp_interface"]
     missing = [k for k in required if k not in payload]
     if missing:
         logger.warning("Нет обязательных полей: %s", missing)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"missing fields: {', '.join(missing)}",
+        )
+
+    if payload.get("Shp_interface") != "link":
+        logger.warning("Некорректный Shp_interface: %s", payload.get("Shp_interface"))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="bad Shp_interface",
         )
 
     out_sum = payload["OutSum"]
@@ -118,30 +125,48 @@ async def robokassa_result(request: Request):
         amount_float = 0.0
 
     period_days = RENEWAL_PERIOD_DAYS or 30
-    expires_at = datetime.now() + timedelta(days=period_days)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=period_days)
+
+    inv_id_int = int(inv_id)
+    user_id_int = int(user_id)
+
+    # Идемпотентность: если платёж уже есть — отвечаем OK
+    if db.payment_exists(inv_id_int):
+        logger.info("Повторное уведомление по inv_id=%s, пропускаем", inv_id_int)
+        return PlainTextResponse(content=f"OK{inv_id}")
 
     # Определяем якорный платеж и следующую дату списания
-    existing = db.get_subscription(int(user_id))
+    existing = db.get_subscription(user_id_int)
     anchor_inv_id = existing.get("anchor_inv_id") if existing else None
     if not anchor_inv_id:
-        anchor_inv_id = int(inv_id)
+        anchor_inv_id = inv_id_int
     next_charge_at = expires_at
 
-    # Фиксируем подписку и платеж
-    db.add_subscription(
-        user_id=int(user_id),
-        username=f"user_{user_id}",
-        expires_at=expires_at,
-        payment_amount=amount_float,
-        anchor_inv_id=anchor_inv_id,
-        next_charge_at=next_charge_at,
-    )
+    # Создаём/обновляем подписку
+    if not existing:
+        db.add_subscription(
+            user_id=user_id_int,
+            username=f"user_{user_id}",
+            expires_at=expires_at,
+            payment_amount=amount_float,
+            anchor_inv_id=anchor_inv_id,
+            next_charge_at=next_charge_at,
+        )
+    else:
+        db.renew_subscription(
+            user_id=user_id_int,
+            expires_at=expires_at,
+            next_charge_at=next_charge_at,
+            anchor_inv_id=anchor_inv_id,
+        )
+
+    # Фиксируем платёж
     db.add_payment(
-        user_id=int(user_id),
+        user_id=user_id_int,
         amount=amount_float,
         currency="KZT",
         invoice_payload=f"robokassa_{inv_id}",
-        inv_id=int(inv_id),
+        inv_id=inv_id_int,
         raw_payload=payload,
     )
 
