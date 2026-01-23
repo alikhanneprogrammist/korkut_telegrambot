@@ -36,6 +36,7 @@ from config import (
     CHANNEL_ID,
     CHANNEL_LINK,
     ADMIN_ID,
+    ADMIN_IDS,
     DATABASE_URL,
     ROBOKASSA_MERCHANT_LOGIN,
     ROBOKASSA_PASSWORD_1,
@@ -69,6 +70,7 @@ logger = logging.getLogger(__name__)
 
 # Инициализация Robokassa
 robokassa_client: Optional[Robokassa] = None
+ADMIN_SET = set(ADMIN_IDS or [])
 
 # =====================================================
 # ТЕКСТЫ ВОРОНКИ ПРОДАЖ (точно по схеме)
@@ -299,6 +301,10 @@ def verify_payment_signature(out_sum: str, inv_id: str, signature: str, user_id:
     return signature.upper() == expected_signature
 
 
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_SET or user_id == ADMIN_ID
+
+
 def _md5(s: str) -> str:
     return hashlib.md5(s.encode("utf-8")).hexdigest()
 
@@ -451,7 +457,7 @@ async def send_payment_block(query, context: ContextTypes.DEFAULT_TYPE, text: st
     user = query.from_user
     db.update_user_state(user.id, user.username or user.first_name, "payment")
     
-    inv_id = int(datetime.now().timestamp()) % 2147483647
+    inv_id = int(time.time() * 1000)
     context.user_data['pending_inv_id'] = inv_id
     context.user_data['pending_amount'] = SUBSCRIPTION_PRICE
     
@@ -776,7 +782,7 @@ async def confirm_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ручное подтверждение оплаты администратором"""
     user = update.effective_user
     
-    if user.id != ADMIN_ID:
+    if not is_admin(user.id):
         await update.message.reply_text("❌ У вас нет доступа к этой команде")
         return
     
@@ -1027,7 +1033,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Регистрируем пользователя и показываем блок с офертой
     db.update_user_state(user.id, user.username or user.first_name, "offer_agreement")
     
-    inv_id = int(datetime.now().timestamp()) % 2147483647
+    inv_id = int(time.time() * 1000)
     context.user_data['pending_inv_id'] = inv_id
     context.user_data['pending_amount'] = SUBSCRIPTION_PRICE
     
@@ -1119,7 +1125,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Статистика для администратора"""
     user = update.effective_user
     
-    if user.id != ADMIN_ID:
+    if not is_admin(user.id):
         await update.message.reply_text("❌ У вас нет доступа к этой команде")
         return
     
@@ -1155,7 +1161,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/help - Показать справку\n"
     )
     
-    if update.effective_user.id == ADMIN_ID:
+    if is_admin(update.effective_user.id):
         help_text += (
             "\n👑 Команды администратора:\n"
             "/stats - Статистика бота\n"
@@ -1226,6 +1232,10 @@ async def perform_recurring_charge(
 async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
     """
     Ежедневное автосписание активных подписок с next_charge_at <= сейчас.
+    Prod-логика:
+    - создаём recurring (new_inv_id)
+    - если OK: ставим pending_inv_id и ждём ResultURL
+    - пока pending есть — не создаём новые попытки
     """
     now_local = datetime.now(TIMEZONE)
     subs = db.get_all_active_subscriptions()
@@ -1240,8 +1250,23 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
             continue
 
         user_id = sub["user_id"]
-        # генерируем новый InvoiceID (миллисекунды), чтобы избежать коллизий
-        new_inv_id = int(time.time() * 1000) % 2147483647
+        current_sub = db.get_subscription(user_id)
+
+        # если уже есть pending — ждём ResultURL, не создаём новый рекуррент
+        if current_sub and current_sub.get("pending_inv_id"):
+            logger.info(
+                "Skip recurring: pending exists user=%s pending_inv_id=%s",
+                user_id, current_sub.get("pending_inv_id")
+            )
+            db.renew_subscription(
+                user_id=user_id,
+                expires_at=current_sub["expires_at"],
+                next_charge_at=now_local + timedelta(days=1),
+                anchor_inv_id=anchor_inv_id,
+            )
+            continue
+
+        new_inv_id = int(time.time() * 1000)
         success, error = await perform_recurring_charge(
             user_id,
             anchor_inv_id,
@@ -1251,15 +1276,22 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
         )
 
         if success:
-            # Ждём ResultURL для подтверждения. Чтобы не спамить запросами, двигаем next_charge_at на сутки вперёд.
-            next_retry = now_local + timedelta(days=1)
+            db.set_pending_charge(
+                user_id=user_id,
+                pending_inv_id=new_inv_id,
+                amount=float(SUBSCRIPTION_PRICE),
+                created_at=now_local,
+            )
             db.renew_subscription(
                 user_id=user_id,
-                expires_at=sub["expires_at"],
-                next_charge_at=next_retry,
+                expires_at=current_sub["expires_at"] if current_sub else sub["expires_at"],
+                next_charge_at=now_local + timedelta(days=1),
                 anchor_inv_id=anchor_inv_id,
             )
-            logger.info("Recurring запрос отправлен: user=%s anchor=%s new_inv_id=%s", user_id, anchor_inv_id, new_inv_id)
+            logger.info(
+                "Recurring created: user=%s anchor=%s new_inv_id=%s (pending set)",
+                user_id, anchor_inv_id, new_inv_id
+            )
         else:
             warn_text = (
                 "❌ Не удалось отправить запрос на автосписание.\n"
@@ -1274,19 +1306,19 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception as e:
                 logger.warning("Не удалось отправить предупреждение пользователю %s: %s", user_id, e)
-            if ADMIN_ID:
-                try:
-                    await context.bot.send_message(
-                        chat_id=ADMIN_ID,
-                        text=f"❌ Автосписание не удалось: user={user_id}, err={error}",
-                    )
-                except Exception:
-                    pass
-            next_retry = now_local + timedelta(days=1)
+            if ADMIN_SET or ADMIN_ID:
+                for admin_id in (ADMIN_SET or {ADMIN_ID}):
+                    try:
+                        await context.bot.send_message(
+                            chat_id=admin_id,
+                            text=f"❌ Автосписание не удалось: user={user_id}, err={error}",
+                        )
+                    except Exception:
+                        pass
             db.renew_subscription(
                 user_id=user_id,
                 expires_at=sub["expires_at"],
-                next_charge_at=next_retry,
+                next_charge_at=now_local + timedelta(days=1),
                 anchor_inv_id=anchor_inv_id,
             )
 
@@ -1328,21 +1360,29 @@ async def check_expired_subscriptions(context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"✅ Проверка завершена: предупреждений отправлено: {warned_count}, кикнуто: {kicked_count}")
         
         # Уведомляем админа о результатах
-        if ADMIN_ID and (kicked_count > 0 or warned_count > 0):
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"📊 Ежедневная проверка подписок:\n\n"
-                     f"⚠️ Предупреждений отправлено: {warned_count}\n"
-                     f"🚫 Пользователей кикнуто: {kicked_count}"
-            )
+        if (ADMIN_SET or ADMIN_ID) and (kicked_count > 0 or warned_count > 0):
+            for admin_id in (ADMIN_SET or {ADMIN_ID}):
+                try:
+                    await context.bot.send_message(
+                        chat_id=admin_id,
+                        text=f"📊 Ежедневная проверка подписок:\n\n"
+                             f"⚠️ Предупреждений отправлено: {warned_count}\n"
+                             f"🚫 Пользователей кикнуто: {kicked_count}"
+                    )
+                except Exception:
+                    pass
     
     except Exception as e:
         logger.error(f"Ошибка при проверке подписок: {e}")
-        if ADMIN_ID:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"❌ Ошибка при проверке подписок:\n{e}"
-            )
+        if ADMIN_SET or ADMIN_ID:
+            for admin_id in (ADMIN_SET or {ADMIN_ID}):
+                try:
+                    await context.bot.send_message(
+                        chat_id=admin_id,
+                        text=f"❌ Ошибка при проверке подписок:\n{e}"
+                    )
+                except Exception:
+                    pass
 
 
 async def send_expiration_warning(context: ContextTypes.DEFAULT_TYPE, user_id: int, days_left: int, expires_at: datetime):
@@ -1407,7 +1447,7 @@ async def manual_check_subscriptions(update: Update, context: ContextTypes.DEFAU
     """Ручная проверка подписок (команда для админа)"""
     user = update.effective_user
     
-    if user.id != ADMIN_ID:
+    if not is_admin(user.id):
         await update.message.reply_text("❌ У вас нет доступа к этой команде")
         return
     

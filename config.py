@@ -20,6 +20,16 @@ CHANNEL_LINK = os.getenv('CHANNEL_LINK', '')
 
 # ID администратора (ваш Telegram ID)
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
+# Список админов (через запятую). ADMIN_ID будет добавлен для совместимости.
+ADMIN_IDS = []
+raw_admin_ids = os.getenv("ADMIN_IDS", "")
+if raw_admin_ids:
+    try:
+        ADMIN_IDS = [int(x.strip()) for x in raw_admin_ids.split(",") if x.strip()]
+    except ValueError:
+        ADMIN_IDS = []
+if ADMIN_ID and ADMIN_ID not in ADMIN_IDS:
+    ADMIN_IDS.append(ADMIN_ID)
 
 # === Robokassa ===
 # Идентификатор магазина в Robokassa

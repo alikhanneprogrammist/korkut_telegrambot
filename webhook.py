@@ -1,8 +1,8 @@
 """
 Простой FastAPI-вебхук для приема Result URL от Robokassa.
 - Проверяет MD5-подпись (Пароль #2)
-- Активирует подписку в БД
-- Сохраняет платеж
+- Идемпотентно сохраняет платёж
+- Продлевает/активирует подписку (pending-инвойсы поддерживаются)
 - Отправляет пользователю ссылку на канал
 
 Запуск (пример):
@@ -124,43 +124,61 @@ async def robokassa_result(request: Request):
     except ValueError:
         amount_float = 0.0
 
-    period_days = RENEWAL_PERIOD_DAYS or 30
-    expires_at = datetime.now(timezone.utc) + timedelta(days=period_days)
-
     inv_id_int = int(inv_id)
     user_id_int = int(user_id)
 
-    # Идемпотентность: если платёж уже есть — отвечаем OK
+    # Идемпотентность: если платёж уже записан — просто отвечаем OK
     if db.payment_exists(inv_id_int):
-        logger.info("Повторное уведомление по inv_id=%s, пропускаем", inv_id_int)
+        logger.info("Duplicate ResultURL ignored (payment exists): user=%s inv_id=%s", user_id, inv_id)
         return PlainTextResponse(content=f"OK{inv_id}")
 
-    # Определяем якорный платеж и следующую дату списания
+    period_days = RENEWAL_PERIOD_DAYS or 30
+    now_dt = datetime.now(timezone.utc)
+
+    # Берём активную подписку (если есть) и продлеваем от max(expires_at, now)
     existing = db.get_subscription(user_id_int)
+    if existing and existing.get("expires_at"):
+        base_dt = existing["expires_at"] if existing["expires_at"] > now_dt else now_dt
+    else:
+        base_dt = now_dt
+
+    new_expires_at = base_dt + timedelta(days=period_days)
+    new_next_charge_at = new_expires_at
+
+    # Якорь: первый успешный inv_id фиксируем, дальше не меняем
     anchor_inv_id = existing.get("anchor_inv_id") if existing else None
     if not anchor_inv_id:
         anchor_inv_id = inv_id_int
-    next_charge_at = expires_at
 
-    # Создаём/обновляем подписку
-    if not existing:
-        db.add_subscription(
-            user_id=user_id_int,
-            username=f"user_{user_id}",
-            expires_at=expires_at,
-            payment_amount=amount_float,
-            anchor_inv_id=anchor_inv_id,
-            next_charge_at=next_charge_at,
-        )
-    else:
+    # pending подтверждённый рекуррент
+    if existing and existing.get("pending_inv_id") and int(existing["pending_inv_id"]) == inv_id_int:
+        db.clear_pending_charge(user_id_int)
         db.renew_subscription(
             user_id=user_id_int,
-            expires_at=expires_at,
-            next_charge_at=next_charge_at,
+            expires_at=new_expires_at,
+            next_charge_at=new_next_charge_at,
             anchor_inv_id=anchor_inv_id,
         )
+    else:
+        # обычный (первый/ручной) платеж
+        if existing:
+            db.renew_subscription(
+                user_id=user_id_int,
+                expires_at=new_expires_at,
+                next_charge_at=new_next_charge_at,
+                anchor_inv_id=anchor_inv_id,
+            )
+        else:
+            db.add_subscription(
+                user_id=user_id_int,
+                username=f"user_{user_id}",
+                expires_at=new_expires_at,
+                payment_amount=amount_float,
+                anchor_inv_id=anchor_inv_id,
+                next_charge_at=new_next_charge_at,
+            )
 
-    # Фиксируем платёж
+    # Пишем платёж (после идемпотентности)
     db.add_payment(
         user_id=user_id_int,
         amount=amount_float,

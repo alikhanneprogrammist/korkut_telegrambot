@@ -60,6 +60,30 @@ class Database:
                         """
                     )
                 )
+                conn.execute(
+                    sa.text(
+                        """
+                        ALTER TABLE subscriptions
+                        ADD COLUMN IF NOT EXISTS pending_inv_id BIGINT
+                        """
+                    )
+                )
+                conn.execute(
+                    sa.text(
+                        """
+                        ALTER TABLE subscriptions
+                        ADD COLUMN IF NOT EXISTS pending_amount NUMERIC
+                        """
+                    )
+                )
+                conn.execute(
+                    sa.text(
+                        """
+                        ALTER TABLE subscriptions
+                        ADD COLUMN IF NOT EXISTS pending_created_at TIMESTAMP
+                        """
+                    )
+                )
             logger.info("Подключено к Postgres")
         except Exception as e:
             logger.error(f"Не удалось подключиться к Postgres: {e}")
@@ -160,7 +184,8 @@ class Database:
                 s.execute(
                     sa.text(
                         """
-                        SELECT user_id, expires_at, active, cancel_requested, cancel_requested_at, anchor_inv_id, next_charge_at
+                        SELECT user_id, expires_at, active, cancel_requested, cancel_requested_at, anchor_inv_id, next_charge_at,
+                               pending_inv_id, pending_amount, pending_created_at
                         FROM subscriptions
                         WHERE user_id = :uid AND active = TRUE
                         ORDER BY expires_at DESC
@@ -181,6 +206,9 @@ class Database:
                     "cancel_requested_at": row["cancel_requested_at"],
                     "anchor_inv_id": row.get("anchor_inv_id"),
                     "next_charge_at": row.get("next_charge_at"),
+                    "pending_inv_id": row.get("pending_inv_id"),
+                    "pending_amount": row.get("pending_amount"),
+                    "pending_created_at": row.get("pending_created_at"),
                 }
         return None
 
@@ -209,7 +237,8 @@ class Database:
                 s.execute(
                     sa.text(
                         """
-                        SELECT user_id, expires_at, cancel_requested, anchor_inv_id, next_charge_at
+                        SELECT user_id, expires_at, cancel_requested, anchor_inv_id, next_charge_at,
+                               pending_inv_id, pending_amount, pending_created_at
                         FROM subscriptions
                         WHERE active = TRUE
                         """
@@ -353,6 +382,43 @@ class Database:
                 {"uid": user_id, "inv": inv, "amt": amount, "cur": currency, "rawp": raw_json},
             )
         logger.info(f"Платёж записан: user={user_id}, inv_id={inv}, amount={amount} {currency}")
+
+    # -------------------
+    # Pending recurring
+    # -------------------
+    def set_pending_charge(self, user_id: int, pending_inv_id: int, amount: float, created_at: datetime):
+        with self.Session() as s, s.begin():
+            s.execute(
+                sa.text(
+                    """
+                    UPDATE subscriptions
+                    SET pending_inv_id = :pinv,
+                        pending_amount = :amt,
+                        pending_created_at = :pcreated,
+                        updated_at = now()
+                    WHERE user_id = :uid AND active = TRUE
+                    """
+                ),
+                {"pinv": pending_inv_id, "amt": amount, "pcreated": created_at, "uid": user_id},
+            )
+        logger.info("Pending charge set: user=%s inv=%s", user_id, pending_inv_id)
+
+    def clear_pending_charge(self, user_id: int):
+        with self.Session() as s, s.begin():
+            s.execute(
+                sa.text(
+                    """
+                    UPDATE subscriptions
+                    SET pending_inv_id = NULL,
+                        pending_amount = NULL,
+                        pending_created_at = NULL,
+                        updated_at = now()
+                    WHERE user_id = :uid AND active = TRUE
+                    """
+                ),
+                {"uid": user_id},
+            )
+        logger.info("Pending charge cleared: user=%s", user_id)
 
     # -------------------
     # Статистика
