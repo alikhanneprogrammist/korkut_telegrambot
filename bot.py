@@ -457,7 +457,7 @@ async def send_payment_block(query, context: ContextTypes.DEFAULT_TYPE, text: st
     user = query.from_user
     db.update_user_state(user.id, user.username or user.first_name, "payment")
     
-    inv_id = int(time.time() * 1000)
+    inv_id = int(time.time() * 1000) % 2147483647
     context.user_data['pending_inv_id'] = inv_id
     context.user_data['pending_amount'] = SUBSCRIPTION_PRICE
     
@@ -1033,7 +1033,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Регистрируем пользователя и показываем блок с офертой
     db.update_user_state(user.id, user.username or user.first_name, "offer_agreement")
     
-    inv_id = int(time.time() * 1000)
+    inv_id = int(time.time() * 1000) % 2147483647
     context.user_data['pending_inv_id'] = inv_id
     context.user_data['pending_amount'] = SUBSCRIPTION_PRICE
     
@@ -1266,7 +1266,7 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
             )
             continue
 
-        new_inv_id = int(time.time() * 1000)
+        new_inv_id = int(time.time() * 1000) % 2147483647
         success, error = await perform_recurring_charge(
             user_id,
             anchor_inv_id,
