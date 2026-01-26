@@ -86,6 +86,52 @@ TEXTS = {
 — теряешь время на поиск актуальных условий
 — хочешь работать спокойно и уверенно""",
 
+    # STORY 2
+    "story2": """В ипотеке чаще всего ломает сделку не клиент, а:
+— устаревшая информация
+— неверная стратегия
+— отсутствие поддержки в сложный момент.
+
+Korkut ipoteka создан, чтобы ты не оставался(лась) с этим один на один.""",
+
+    # STORY 3
+    "story3": """Я — практикующий ипотечный брокер.
+Каждый день сопровождаю реальные сделки и вижу, где чаще всего теряют клиентов и деньги.
+
+В Korkut ipoteka — только практика и то, что реально работает.""",
+
+    # STORY 4
+    "story4": """Что внутри канала Korkut ipoteka:
+
+✔ актуальные ипотечные программы
+✔ изменения по банкам без поиска по чатам
+✔ разборы реальных кейсов
+✔ помощь в сложных сделках
+
+Это не обучение. Это рабочий инструмент.""",
+
+    # STORY 5
+    "story5": """Кейс из практики 👇
+После отказа в двух банках клиент получил одобрение с лучшими условиями — за счёт правильной стратегии.
+
+В канале Korkut ipoteka такие ситуации разбираются регулярно.""",
+
+    # STORY 6
+    "story6": """Одна ошибка в ипотеке может стоить десятков тысяч тенге и репутации.
+
+💳 Подписка на Korkut ipoteka — {price} тг / месяц
+
+Ты получаешь:
+— актуальную информацию
+— поддержку и разборы
+— уверенность в каждой сделке""",
+
+    # STORY 7
+    "story7": """Можно дальше разбираться в ипотеке самостоятельно.
+А можно быть в среде, где ответы уже есть.
+
+Korkut ipoteka — про спокойную и уверенную работу.""",
+
     # 2. БЛОК «ХОЧУ»
     "want": """В ипотеке чаще всего ломает сделку не клиент, а:
 — устаревшая информация
@@ -393,15 +439,100 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Регистрируем пользователя в воронке
     db.update_user_state(user.id, user.username or user.first_name, "start")
     
-    # Кнопка: «Ты по адресу»
-    keyboard = [[InlineKeyboardButton("👉 Ты по адресу", callback_data="funnel_want")]]
+    # Кнопка: «Это про меня»
+    keyboard = [[InlineKeyboardButton("🔘 Это про меня", callback_data="funnel_story2")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await send_start_block(update.message, reply_markup)
 
 
+async def funnel_story2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Шаг 2: боль/почему нужен канал"""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    db.update_user_state(user.id, user.username or user.first_name, "story2")
+
+    keyboard = [[InlineKeyboardButton("🔘 Хочу без ошибок", callback_data="funnel_story3")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.reply_text(TEXTS["story2"], reply_markup=reply_markup)
+
+
+async def funnel_story3(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Шаг 3: практика и опыт"""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    db.update_user_state(user.id, user.username or user.first_name, "story3")
+
+    keyboard = [[InlineKeyboardButton("🔘 Интересно", callback_data="funnel_story4")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.reply_text(TEXTS["story3"], reply_markup=reply_markup)
+
+
+async def funnel_story4(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Шаг 4: что внутри канала"""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    db.update_user_state(user.id, user.username or user.first_name, "story4")
+
+    keyboard = [[InlineKeyboardButton("🔘 Хочу доступ", callback_data="funnel_story5")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.reply_text(TEXTS["story4"], reply_markup=reply_markup)
+
+
+async def funnel_story5(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Шаг 5: кейс из практики"""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    db.update_user_state(user.id, user.username or user.first_name, "story5")
+
+    keyboard = [[InlineKeyboardButton("🔘 Мне это нужно", callback_data="funnel_story6")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.reply_text(TEXTS["story5"], reply_markup=reply_markup)
+
+
+async def funnel_story6(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Шаг 6: стоимость и ценность"""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    db.update_user_state(user.id, user.username or user.first_name, "story6")
+
+    keyboard = [
+        [InlineKeyboardButton("🔘 Оплатить подписку", callback_data="funnel_offer_agreement")],
+        [InlineKeyboardButton("🔘 Перейти в канал", url=CHANNEL_LINK)],
+        [InlineKeyboardButton("🔘 Дальше", callback_data="funnel_story7")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.reply_text(
+        TEXTS["story6"].format(price=SUBSCRIPTION_PRICE),
+        reply_markup=reply_markup
+    )
+
+
+async def funnel_story7(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Шаг 7: мягкий дожим"""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    db.update_user_state(user.id, user.username or user.first_name, "story7")
+
+    keyboard = [[InlineKeyboardButton("🔘 Присоединиться сейчас", callback_data="funnel_offer_agreement")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.reply_text(TEXTS["story7"], reply_markup=reply_markup)
+
+
 async def funnel_want(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """2. БЛОК «ХОЧУ» - описание канала"""
+    """2. БЛОК «ХОЧУ» - описание канала (старый шаг, остаётся для обратной совместимости)"""
     query = update.callback_query
     await query.answer()
     
@@ -1527,6 +1658,12 @@ def main():
     application.add_handler(CommandHandler("check_subs", manual_check_subscriptions))
     application.add_handler(CommandHandler("help", help_cmd))
     application.add_handler(ChatJoinRequestHandler(handle_join_request))
+    application.add_handler(CallbackQueryHandler(funnel_story2, pattern="^funnel_story2$"))
+    application.add_handler(CallbackQueryHandler(funnel_story3, pattern="^funnel_story3$"))
+    application.add_handler(CallbackQueryHandler(funnel_story4, pattern="^funnel_story4$"))
+    application.add_handler(CallbackQueryHandler(funnel_story5, pattern="^funnel_story5$"))
+    application.add_handler(CallbackQueryHandler(funnel_story6, pattern="^funnel_story6$"))
+    application.add_handler(CallbackQueryHandler(funnel_story7, pattern="^funnel_story7$"))
     
     # Планировщик: проверка подписок каждый день в 12:00 (время Алматы)
     job_queue = application.job_queue
