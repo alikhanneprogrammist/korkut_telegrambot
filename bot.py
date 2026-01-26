@@ -84,9 +84,7 @@ TEXTS = {
 — боишься ошибиться в сделке
 — не всегда уверен(а) в выборе банка
 — теряешь время на поиск актуальных условий
-— хочешь работать спокойно и уверенно
-
-👉 ты по адресу.""",
+— хочешь работать спокойно и уверенно""",
 
     # 2. БЛОК «ХОЧУ»
     "want": """В ипотеке чаще всего ломает сделку не клиент, а:
@@ -395,8 +393,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Регистрируем пользователя в воронке
     db.update_user_state(user.id, user.username or user.first_name, "start")
     
-    # Кнопка: «Что внутри»
-    keyboard = [[InlineKeyboardButton("👉 Что внутри", callback_data="funnel_want")]]
+    # Кнопка: «Ты по адресу»
+    keyboard = [[InlineKeyboardButton("👉 Ты по адресу", callback_data="funnel_want")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await send_start_block(update.message, reply_markup)
@@ -1369,10 +1367,8 @@ async def check_expired_subscriptions(context: ContextTypes.DEFAULT_TYPE):
                 await kick_user_from_channel(context, user_id, username)
                 kicked_count += 1
             
-            # За 3 дня до истечения - предупреждение
-            elif days_left == 3 and not cancel_requested:
-                await send_expiration_warning(context, user_id, days_left, expires_at)
-                warned_count += 1
+            # Оповещение перед автосписанием отключено по требованию
+            # (ранее здесь отправлялось предупреждение за 3 дня)
         
         logger.info(f"✅ Проверка завершена: предупреждений отправлено: {warned_count}, кикнуто: {kicked_count}")
         
