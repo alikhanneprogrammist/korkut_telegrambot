@@ -453,7 +453,7 @@ async def funnel_story2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     db.update_user_state(user.id, user.username or user.first_name, "story2")
 
-    keyboard = [[InlineKeyboardButton("🔘 Хочу без ошибок", callback_data="funnel_story3")]]
+    keyboard = [[InlineKeyboardButton("✨ Хочу без ошибок", callback_data="funnel_story3")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.message.reply_text(TEXTS["story2"], reply_markup=reply_markup)
@@ -466,7 +466,7 @@ async def funnel_story3(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     db.update_user_state(user.id, user.username or user.first_name, "story3")
 
-    keyboard = [[InlineKeyboardButton("🔘 Интересно", callback_data="funnel_story4")]]
+    keyboard = [[InlineKeyboardButton("👀 Интересно", callback_data="funnel_story4")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.message.reply_text(TEXTS["story3"], reply_markup=reply_markup)
@@ -479,7 +479,7 @@ async def funnel_story4(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     db.update_user_state(user.id, user.username or user.first_name, "story4")
 
-    keyboard = [[InlineKeyboardButton("🔘 Хочу доступ", callback_data="funnel_story5")]]
+    keyboard = [[InlineKeyboardButton("📥 Хочу доступ", callback_data="funnel_story5")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.message.reply_text(TEXTS["story4"], reply_markup=reply_markup)
@@ -492,7 +492,7 @@ async def funnel_story5(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     db.update_user_state(user.id, user.username or user.first_name, "story5")
 
-    keyboard = [[InlineKeyboardButton("🔘 Мне это нужно", callback_data="funnel_story6")]]
+    keyboard = [[InlineKeyboardButton("✅ Мне это нужно", callback_data="funnel_story6")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.message.reply_text(TEXTS["story5"], reply_markup=reply_markup)
@@ -506,9 +506,8 @@ async def funnel_story6(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.update_user_state(user.id, user.username or user.first_name, "story6")
 
     keyboard = [
-        [InlineKeyboardButton("🔘 Оплатить подписку", callback_data="funnel_offer_agreement")],
-        [InlineKeyboardButton("🔘 Перейти в канал", url=CHANNEL_LINK)],
-        [InlineKeyboardButton("🔘 Дальше", callback_data="funnel_story7")],
+        [InlineKeyboardButton("💳 Оплатить подписку", callback_data="funnel_offer_agreement")],
+        [InlineKeyboardButton("➡️ Дальше", callback_data="funnel_story7")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -525,7 +524,7 @@ async def funnel_story7(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     db.update_user_state(user.id, user.username or user.first_name, "story7")
 
-    keyboard = [[InlineKeyboardButton("🔘 Присоединиться сейчас", callback_data="funnel_offer_agreement")]]
+    keyboard = [[InlineKeyboardButton("🚀 Присоединиться сейчас", callback_data="funnel_offer_agreement")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.message.reply_text(TEXTS["story7"], reply_markup=reply_markup)
