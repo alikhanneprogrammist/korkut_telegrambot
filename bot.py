@@ -308,12 +308,11 @@ def generate_payment_link_manual(
     user_id: int,
     *,
     recurring: bool = False,
-    previous_inv_id: Optional[int] = None,
 ) -> str:
     """
     Ручное создание ссылки на оплату (KZ хост).
     Формат подписи: MerchantLogin:OutSum:InvId:Password1:Shp_interface=link:Shp_user_id=value
-    recurring=True добавляет флаг Recurring, previous_inv_id пробрасывает PreviousInvoiceID.
+    recurring=True добавляет флаг Recurring.
     """
     out_sum_str = f"{float(out_sum):.6f}"
     shp_interface = "Shp_interface=link"
@@ -340,8 +339,6 @@ def generate_payment_link_manual(
     ]
     if recurring:
         params.append("Recurring=true")
-        if previous_inv_id is not None:
-            params.append(f"PreviousInvoiceID={previous_inv_id}")
     if ROBOKASSA_TEST_MODE:
         params.append("IsTest=1")
 
@@ -1403,12 +1400,6 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
                 "Skip recurring: pending exists user=%s pending_inv_id=%s",
                 user_id, current_sub.get("pending_inv_id")
             )
-            db.renew_subscription(
-                user_id=user_id,
-                expires_at=current_sub["expires_at"],
-                next_charge_at=now_local + timedelta(days=1),
-                anchor_inv_id=anchor_inv_id,
-            )
             continue
 
         new_inv_id = int(time.time() * 1000) % 2147483647
@@ -1426,12 +1417,6 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
                 pending_inv_id=new_inv_id,
                 amount=float(SUBSCRIPTION_PRICE),
                 created_at=now_local,
-            )
-            db.renew_subscription(
-                user_id=user_id,
-                expires_at=current_sub["expires_at"] if current_sub else sub["expires_at"],
-                next_charge_at=now_local + timedelta(days=1),
-                anchor_inv_id=anchor_inv_id,
             )
             logger.info(
                 "Recurring created: user=%s anchor=%s new_inv_id=%s (pending set)",
@@ -1460,12 +1445,16 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
                         )
                     except Exception:
                         pass
-            db.renew_subscription(
-                user_id=user_id,
-                expires_at=sub["expires_at"],
-                next_charge_at=now_local + timedelta(days=1),
-                anchor_inv_id=anchor_inv_id,
-            )
+            expires_at = sub.get("expires_at")
+            if expires_at and getattr(expires_at, "tzinfo", None) is None:
+                expires_at = TIMEZONE.localize(expires_at)
+            if expires_at:
+                db.renew_subscription(
+                    user_id=user_id,
+                    expires_at=expires_at,
+                    next_charge_at=expires_at,
+                    anchor_inv_id=anchor_inv_id,
+                )
 
 
 async def check_expired_subscriptions(context: ContextTypes.DEFAULT_TYPE):
