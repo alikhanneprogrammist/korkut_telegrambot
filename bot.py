@@ -1665,6 +1665,12 @@ def main():
         time=dt_time(hour=3, minute=0, second=0, tzinfo=TIMEZONE),
         name="daily_recurring_charge"
     )
+    # Разовый запуск рекуррентов через 10 секунд после старта (для теста/ускорения)
+    job_queue.run_once(
+        process_recurring_charges,
+        when=10,
+        name="recurring_on_start_once",
+    )
     logger.info("📅 Запланирована ежедневная проверка подписок в 12:00")
     
     # Воронка продаж - кнопки
