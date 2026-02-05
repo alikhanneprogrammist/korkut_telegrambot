@@ -18,7 +18,11 @@ services:
     # При необходимости пробросить прокси/сетевые настройки:
     # networks:
     #   - default
-
+  logging:
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
   db:
     image: postgres:15
     container_name: telegram_sales_db
@@ -38,8 +42,3 @@ volumes:
 # networks:
 #   default:
 #     driver: bridge
-logging:
-  driver: "json-file"
-  options:
-    max-size: "10m"
-    max-file: "3"
