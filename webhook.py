@@ -40,6 +40,9 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
+logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 if not TELEGRAM_TOKEN:
     raise RuntimeError("TELEGRAM_TOKEN не задан (проверьте .env)")
