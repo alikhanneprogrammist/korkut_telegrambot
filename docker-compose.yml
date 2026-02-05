@@ -15,14 +15,12 @@ services:
       - db
     ports:
       - "8000:8000" # webhook FastAPI (Robokassa Result URL)
-    # При необходимости пробросить прокси/сетевые настройки:
-    # networks:
-    #   - default
-  logging:
-  driver: "json-file"
-  options:
-    max-size: "10m"
-    max-file: "3"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   db:
     image: postgres:15
     container_name: telegram_sales_db
@@ -33,12 +31,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-telegram_sales}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    # networks:
-    #   - default
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   pgdata:
-
-# networks:
-#   default:
-#     driver: bridge
