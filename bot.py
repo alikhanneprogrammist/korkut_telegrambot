@@ -557,8 +557,12 @@ async def funnel_want(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """3. БЛОК «ВОПРОСЫ» - обработка любого текстового сообщения как вопроса"""
     user = update.effective_user
+    message = update.effective_message
+
+    # апдейт не от пользователя (канал/системный/что-то без from_user)
+    if user is None or message is None:
+        return
     
     # Проверяем, есть ли активная подписка
     subscription = db.get_subscription(user.id)
