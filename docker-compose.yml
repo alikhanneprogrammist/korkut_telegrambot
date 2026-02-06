@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   telegram_sales:
     build: .
@@ -7,14 +5,14 @@ services:
     env_file:
       - .env
     environment:
-      # Если в .env не задать DATABASE_URL, используем подключение к внутреннему Postgres
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://${POSTGRES_USER:-korkut}:${POSTGRES_PASSWORD:-Aman123!}@db:5432/${POSTGRES_DB:-telegram_sales}}
       PYTHONUNBUFFERED: "1"
     restart: unless-stopped
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     ports:
-      - "8000:8000" # webhook FastAPI (Robokassa Result URL)
+      - "8000:8000"
     logging:
       driver: "json-file"
       options:
@@ -31,6 +29,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-telegram_sales}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h 127.0.0.1 -p 5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     logging:
       driver: "json-file"
       options:
