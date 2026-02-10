@@ -321,6 +321,25 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_SET or user_id == ADMIN_ID
 
 
+def verify_payment_signature(out_sum: str, inv_id: str, signature: str, user_id: str) -> bool:
+    """Проверка подписи Result URL Robokassa (Пароль #2). Параметры Shp_ в алфавитном порядке."""
+    sig_string = (
+        f"{ROBOKASSA_MERCHANT_LOGIN}:{out_sum}:{inv_id}:"
+        f"{ROBOKASSA_PASSWORD_2}:Shp_interface=link:Shp_user_id={user_id}"
+    )
+    expected = hashlib.md5(sig_string.encode()).hexdigest()
+    return expected.lower() == (signature or "").strip().lower()
+
+
+def build_after_payment_keyboard():
+    """Клавиатура после оплаты: ссылка на канал и отключение автоплатежа."""
+    keyboard = [
+        [InlineKeyboardButton("🔗 Перейти в канал", url=CHANNEL_LINK)],
+        [InlineKeyboardButton("🚫 Отключить автоплатёж", callback_data="cancel_subscription")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
 # =====================================================
 # ВОРОНКА ПРОДАЖ - ОБРАБОТЧИКИ
 # =====================================================
@@ -500,6 +519,76 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # =====================================================
+# ЗАПРОС НА ВСТУПЛЕНИЕ В КАНАЛ
+# =====================================================
+
+async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Одобряем заявку, если у пользователя активная подписка; иначе отклоняем."""
+    if not update.chat_join_request:
+        return
+    user = update.chat_join_request.from_user
+    user_id = user.id
+    subscription = db.get_subscription(user_id)
+    if is_subscription_active(subscription):
+        await update.chat_join_request.approve()
+        logger.info("Заявка одобрена: user_id=%s", user_id)
+    else:
+        await update.chat_join_request.decline()
+        logger.info("Заявка отклонена (нет подписки): user_id=%s", user_id)
+
+
+# =====================================================
+# ОФЕРТА, ОПЛАТА, ОТМЕНА АВТОПЛАТЕЖА, ПОДРОБНОСТИ
+# =====================================================
+
+async def funnel_offer_agreement(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать оферту и кнопку оплаты."""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    db.update_user_state(user.id, user.username or user.first_name, "offer_agreement")
+
+    inv_id = int(time.time() * 1000)
+    payment_link = generate_payment_link_manual(
+        inv_id=inv_id,
+        out_sum=float(SUBSCRIPTION_PRICE),
+        description="Подписка Korkut ipoteka",
+        user_id=user.id,
+        recurring=True,
+    )
+    text = TEXTS["offer_agreement"].format(price=SUBSCRIPTION_PRICE)
+    keyboard = [
+        [InlineKeyboardButton("Оплатить", url=payment_link)],
+        [InlineKeyboardButton("Договор оферты", url=OFFER_AGREEMENT_URL)],
+        [InlineKeyboardButton("Политика конфиденциальности", url=PRIVACY_POLICY_URL)],
+    ]
+    await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def cancel_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отключить автоплатёж по кнопке."""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    result = db.request_cancel_subscription(user.id)
+    if result:
+        desc = describe_subscription(result)
+        await query.message.reply_text(f"✅ Автоплатёж отключён.\n\n{desc}")
+    else:
+        await query.message.reply_text("У вас нет активной подписки.")
+
+
+async def funnel_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать подробности канала и кнопку оплаты."""
+    query = update.callback_query
+    await query.answer()
+    user = query.from_user
+    db.update_user_state(user.id, user.username or user.first_name, "details")
+    keyboard = [[InlineKeyboardButton("💳 Оформить подписку", callback_data="funnel_offer_agreement")]]
+    await query.message.reply_text(TEXTS["details"], reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+# =====================================================
 # ЧАСОВОЙ ПОЯС / ПЛАНИРОВЩИК
 # =====================================================
 
@@ -560,6 +649,9 @@ def main():
     application.add_handler(CallbackQueryHandler(funnel_story5, pattern="^funnel_story5$"))
     application.add_handler(CallbackQueryHandler(funnel_story6, pattern="^funnel_story6$"))
     application.add_handler(CallbackQueryHandler(funnel_story7, pattern="^funnel_story7$"))
+    application.add_handler(CallbackQueryHandler(funnel_offer_agreement, pattern="^funnel_offer_agreement$"))
+    application.add_handler(CallbackQueryHandler(cancel_subscription, pattern="^cancel_subscription$"))
+    application.add_handler(CallbackQueryHandler(funnel_details, pattern="^funnel_details$"))
 
     # ✅ FIX: сообщения только из ЛИЧКИ (убирает апдейты из каналов/групп)
     application.add_handler(
