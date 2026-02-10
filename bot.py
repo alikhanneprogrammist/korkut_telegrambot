@@ -1727,10 +1727,6 @@ def main():
         bootstrap_retries=-1,
         poll_interval=1.0,
         timeout=30,
-        read_timeout=60,
-        write_timeout=30,
-        connect_timeout=20,
-        pool_timeout=20,
         drop_pending_updates=False,
     )
 
