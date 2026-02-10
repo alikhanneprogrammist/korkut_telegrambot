@@ -231,11 +231,11 @@ async def robokassa_result(request: Request):
     # Отправляем пользователю ссылку на канал и управление автоплатежом
     try:
         msg = await bot.send_message(
-            chat_id=int(user_id),
-            text=TEXTS["after_payment"].format(channel_link=CHANNEL_LINK),
+            chat_id=user_id_int,
+            text=TEXTS["after_payment"],
             reply_markup=build_after_payment_keyboard(),
         )
-        asyncio.create_task(delete_message_later(int(user_id), msg.message_id))
+        asyncio.create_task(delete_message_later(user_id_int, msg.message_id))
     except Exception as e:
         logger.warning("Не удалось отправить сообщение пользователю %s: %s", user_id, e)
 

@@ -2,12 +2,11 @@ import logging
 import hashlib
 import urllib.parse
 import time
-from datetime import datetime, timedelta, time as dt_time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 import pytz
-import httpx
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import NetworkError as TelegramNetworkError
@@ -589,6 +588,48 @@ async def funnel_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =====================================================
+# КОМАНДЫ /help И /stats
+# =====================================================
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Справка по боту."""
+    if not update.effective_message:
+        return
+    text = (
+        "🤖 Korkut ipoteka — бот подписки на закрытый канал.\n\n"
+        "Команды:\n"
+        "/start — начать или проверить подписку\n"
+        "/help — эта справка\n"
+        "Если у тебя активная подписка — в /start будет ссылка на канал и кнопка отключения автоплатежа."
+    )
+    await update.effective_message.reply_text(text)
+
+
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Статистика (только для админов)."""
+    user = update.effective_user
+    if not user or not update.effective_message:
+        return
+    if not is_admin(user.id):
+        await update.effective_message.reply_text("Команда только для администратора.")
+        return
+    stats = db.get_statistics()
+    funnel = db.get_funnel_statistics()
+    lines = [
+        "📊 Статистика",
+        f"Пользователей: {stats['total_users']}",
+        f"Активных подписок: {stats['active_subscriptions']}",
+        f"Истекших (ещё не отменённых): {stats['expired_subscriptions']}",
+        f"Платежей: {stats['total_payments']}",
+        "",
+        "Воронка по шагам:",
+    ]
+    for state, count in sorted(funnel.items(), key=lambda x: -x[1]):
+        lines.append(f"  {state}: {count}")
+    await update.effective_message.reply_text("\n".join(lines))
+
+
+# =====================================================
 # ЧАСОВОЙ ПОЯС / ПЛАНИРОВЩИК
 # =====================================================
 
@@ -637,7 +678,8 @@ def main():
 
     # Команды
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", lambda u, c: None))  # оставь твой help_cmd если нужен
+    application.add_handler(CommandHandler("help", cmd_help))
+    application.add_handler(CommandHandler("stats", cmd_stats))
 
     # ✅ ВАЖНО: добавь остальные handlers как у тебя были (я не трогал их логику)
     # Ниже только ключевые части, которые менялись для стабильности:

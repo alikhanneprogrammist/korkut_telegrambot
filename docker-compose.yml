@@ -24,8 +24,8 @@ services:
     container_name: telegram_sales_db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-telegram_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telegram_password}
+      POSTGRES_USER: ${POSTGRES_USER:-korkut}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Aman123!}
       POSTGRES_DB: ${POSTGRES_DB:-telegram_sales}
     volumes:
       - pgdata:/var/lib/postgresql/data

@@ -46,10 +46,76 @@ class Database:
     def _now_local(self) -> datetime:
         return datetime.now(TIMEZONE)
 
+    def _create_tables(self, conn):
+        """Создание таблиц, если их ещё нет (для нового деплоя)."""
+        conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    username TEXT,
+                    state TEXT,
+                    created_at TIMESTAMP DEFAULT now(),
+                    updated_at TIMESTAMP DEFAULT now()
+                )
+                """
+            )
+        )
+        conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    expires_at TIMESTAMP,
+                    active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT now(),
+                    updated_at TIMESTAMP DEFAULT now(),
+                    cancel_requested BOOLEAN DEFAULT FALSE,
+                    cancel_requested_at TIMESTAMP,
+                    anchor_inv_id BIGINT,
+                    next_charge_at TIMESTAMP,
+                    pending_inv_id BIGINT,
+                    pending_amount NUMERIC,
+                    pending_created_at TIMESTAMP
+                )
+                """
+            )
+        )
+        conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS payments (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    inv_id BIGINT NOT NULL UNIQUE,
+                    amount NUMERIC NOT NULL,
+                    currency VARCHAR(10) DEFAULT 'KZT',
+                    status VARCHAR(20) DEFAULT 'paid',
+                    raw_payload JSONB,
+                    created_at TIMESTAMP DEFAULT now()
+                )
+                """
+            )
+        )
+        conn.execute(
+            sa.text(
+                """
+                CREATE TABLE IF NOT EXISTS questions (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    text TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT now()
+                )
+                """
+            )
+        )
+
     def init_database(self):
-        """Проверка подключения и добавление недостающих колонок."""
+        """Создание таблиц (если нет), проверка подключения и добавление недостающих колонок."""
         try:
             with self.engine.begin() as conn:
+                self._create_tables(conn)
                 conn.execute(sa.text("SELECT 1"))
                 # Колонки для отметки отключения автоплатежа
                 conn.execute(
