@@ -391,7 +391,6 @@ class Database:
     # -------------------
     # Платежи
     # -------------------
-    @staticmethod
     def payment_exists(self, inv_id: int) -> bool:
         """Проверить, есть ли уже платёж с этим inv_id."""
         with self.Session() as s:
