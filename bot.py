@@ -59,11 +59,20 @@ PROGRAM_IMAGE_PATH = BASE_DIR / "основная фото.jpeg"
 
 
 # Настройка логирования
+class DropGetUpdatesFilter(logging.Filter):
+    """Убирает шумные polling-логи Telegram getUpdates."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/getUpdates" not in record.getMessage()
+
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").addFilter(DropGetUpdatesFilter())
 
 # Инициализация базы данных (Postgres)
 
