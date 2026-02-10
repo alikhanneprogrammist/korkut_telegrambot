@@ -1,18 +1,3 @@
-# ✅ ВНЕСЕНЫ ВСЕ ИЗМЕНЕНИЯ:
-# 1) Таймауты для polling через HTTPXRequest (снижает httpx.ReadError)
-# 2) Глобальный error handler (убирает "No error handlers are registered" + логирует контекст)
-# 3) handle_user_message переписан на update.effective_message (без update.message)
-# 4) MessageHandler ограничен только личкой (filters.ChatType.PRIVATE)
-# 5) run_polling ограничен allowed_updates (message/callback_query/chat_join_request)
-
-"""
-Telegram бот для приёма платежей через Robokassa
-Воронка продаж для ипотечного канала
-
-Использует библиотеку: https://github.com/byBenPuls/robokassa
-Установка: pip install robokassa
-"""
-
 import logging
 import hashlib
 import urllib.parse
