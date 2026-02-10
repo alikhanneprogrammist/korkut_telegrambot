@@ -7,6 +7,16 @@ BOT_PID=$!
 
 uvicorn webhook:app --host 0.0.0.0 --port 8000 &
 UVICORN_PID=$!
+cleanup() {
+  kill "$BOT_PID" "$UVICORN_PID" 2>/dev/null || true
+}
 
-wait $BOT_PID $UVICORN_PID
+trap cleanup EXIT INT TERM
+
+# Если любой из процессов завершился, останавливаем второй и выходим.
+# Это гарантирует перезапуск контейнера политикой restart.
+wait -n "$BOT_PID" "$UVICORN_PID"
+EXIT_CODE=$?
+cleanup
+exit "$EXIT_CODE"
 

@@ -1724,6 +1724,7 @@ def main():
     
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
+        bootstrap_retries=-1,
         poll_interval=1.0,
         timeout=30,
         read_timeout=60,
