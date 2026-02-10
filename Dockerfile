@@ -14,10 +14,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем код бота
 COPY . .
 
-# Запуск: бот в фоне, вебхук на uvicorn в переднем плане
+# Скрипт запускает и бота (polling), и вебхук на uvicorn
+RUN chmod +x start.sh
+
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "python bot.py & exec uvicorn webhook:app --host 0.0.0.0 --port 8000"]
+CMD ["./start.sh"]
 

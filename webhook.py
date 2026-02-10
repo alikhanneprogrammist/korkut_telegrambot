@@ -15,9 +15,8 @@ Result URL в кабинете Robokassa:
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Optional
+from typing import Dict
 
-import sqlalchemy as sa
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
@@ -40,9 +39,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
-logger = logging.getLogger(__name__)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 if not TELEGRAM_TOKEN:
     raise RuntimeError("TELEGRAM_TOKEN не задан (проверьте .env)")
@@ -75,39 +71,6 @@ async def on_startup():
 def _form_to_dict(form_data) -> Dict[str, str]:
     """Приводим starlette.datastructures.FormData к обычному dict."""
     return {k: v for k, v in form_data.items()}
-
-
-def _naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
-    """
-    Приводим datetime к naive UTC:
-    - если dt naive -> считаем, что это UTC и возвращаем как есть
-    - если dt aware -> конвертим в UTC и убираем tzinfo
-    """
-    if not dt:
-        return None
-    if dt.tzinfo is None:
-        return dt
-    return dt.astimezone(timezone.utc).replace(tzinfo=None)
-
-
-def _clear_cancel_requested(user_id: int):
-    """Сбросить флаг cancel_requested после успешной оплаты."""
-    try:
-        with db.Session() as s, s.begin():
-            s.execute(
-                sa.text(
-                    """
-                    UPDATE subscriptions
-                    SET cancel_requested = FALSE,
-                        cancel_requested_at = NULL,
-                        updated_at = now()
-                    WHERE user_id = :uid AND active = TRUE
-                    """
-                ),
-                {"uid": user_id},
-            )
-    except Exception as e:
-        logger.warning("Не удалось сбросить cancel_requested для user=%s: %s", user_id, e)
 
 
 @app.get("/health", response_class=PlainTextResponse)
@@ -170,12 +133,14 @@ async def robokassa_result(request: Request):
         return PlainTextResponse(content=f"OK{inv_id}")
 
     period_days = RENEWAL_PERIOD_DAYS or 30
-    now_dt = datetime.utcnow()  # naive UTC
+    now_dt = datetime.now(timezone.utc)
 
     # Берём активную подписку (если есть) и продлеваем от max(expires_at, now)
     existing = db.get_subscription(user_id_int)
-    existing_expires = _naive_utc(existing.get("expires_at")) if existing else None
-    base_dt = max(existing_expires, now_dt) if existing_expires else now_dt
+    if existing and existing.get("expires_at"):
+        base_dt = existing["expires_at"] if existing["expires_at"] > now_dt else now_dt
+    else:
+        base_dt = now_dt
 
     new_expires_at = base_dt + timedelta(days=period_days)
     new_next_charge_at = new_expires_at
@@ -186,10 +151,9 @@ async def robokassa_result(request: Request):
         anchor_inv_id = inv_id_int
 
     # pending подтверждённый рекуррент
-    pending = existing.get("pending_inv_id") if existing else None
-    if pending is not None and int(pending) == inv_id_int:
-        _clear_cancel_requested(user_id_int)
-        db.confirm_pending_charge(
+    if existing and existing.get("pending_inv_id") and int(existing["pending_inv_id"]) == inv_id_int:
+        db.clear_pending_charge(user_id_int)
+        db.renew_subscription(
             user_id=user_id_int,
             expires_at=new_expires_at,
             next_charge_at=new_next_charge_at,
@@ -197,7 +161,6 @@ async def robokassa_result(request: Request):
         )
     else:
         # обычный (первый/ручной) платеж
-        _clear_cancel_requested(user_id_int)
         if existing:
             db.renew_subscription(
                 user_id=user_id_int,
@@ -208,7 +171,7 @@ async def robokassa_result(request: Request):
         else:
             db.add_subscription(
                 user_id=user_id_int,
-                username=f"user_{user_id_int}",
+                username=f"user_{user_id}",
                 expires_at=new_expires_at,
                 payment_amount=amount_float,
                 anchor_inv_id=anchor_inv_id,
@@ -216,26 +179,23 @@ async def robokassa_result(request: Request):
             )
 
     # Пишем платёж (после идемпотентности)
-    try:
-        db.add_payment(
-            user_id=user_id_int,
-            amount=amount_float,
-            currency="KZT",
-            invoice_payload=f"robokassa_{inv_id}",
-            inv_id=inv_id_int,
-            raw_payload=payload,
-        )
-    except Exception as e:
-        logger.warning("add_payment failed (maybe duplicate?): inv_id=%s err=%s", inv_id_int, e)
+    db.add_payment(
+        user_id=user_id_int,
+        amount=amount_float,
+        currency="KZT",
+        invoice_payload=f"robokassa_{inv_id}",
+        inv_id=inv_id_int,
+        raw_payload=payload,
+    )
 
     # Отправляем пользователю ссылку на канал и управление автоплатежом
     try:
         msg = await bot.send_message(
-            chat_id=user_id_int,
-            text=TEXTS["after_payment"],
+            chat_id=int(user_id),
+            text=TEXTS["after_payment"].format(channel_link=CHANNEL_LINK),
             reply_markup=build_after_payment_keyboard(),
         )
-        asyncio.create_task(delete_message_later(user_id_int, msg.message_id))
+        asyncio.create_task(delete_message_later(int(user_id), msg.message_id))
     except Exception as e:
         logger.warning("Не удалось отправить сообщение пользователю %s: %s", user_id, e)
 

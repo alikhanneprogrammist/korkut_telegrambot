@@ -4,13 +4,11 @@ import re
 from datetime import datetime
 from typing import Optional, Dict, List, Any
 
-import pytz
 import sqlalchemy as sa
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 logger = logging.getLogger(__name__)
-TIMEZONE = pytz.timezone("Asia/Almaty")
 
 
 class Database:
@@ -24,98 +22,10 @@ class Database:
         self.engine = create_engine(db_url, future=True)
         self.Session = sessionmaker(self.engine, expire_on_commit=False, future=True)
 
-    # -------------------
-    # Вспомогательные
-    # -------------------
-    @staticmethod
-    def _extract_inv_id(invoice_payload: str) -> Optional[int]:
-        """Пытаемся вытащить числовой inv_id из строки payload."""
-        if not invoice_payload:
-            return None
-        match = re.search(r"(\d+)", invoice_payload)
-        return int(match.group(1)) if match else None
-
-    def _to_local_aware(self, dt: Optional[datetime]) -> Optional[datetime]:
-        """Привести datetime к aware в Asia/Almaty."""
-        if not dt:
-            return None
-        if dt.tzinfo is None:
-            return TIMEZONE.localize(dt)
-        return dt.astimezone(TIMEZONE)
-
-    def _now_local(self) -> datetime:
-        return datetime.now(TIMEZONE)
-
-    def _create_tables(self, conn):
-        """Создание таблиц, если их ещё нет (для нового деплоя)."""
-        conn.execute(
-            sa.text(
-                """
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    username TEXT,
-                    state TEXT,
-                    created_at TIMESTAMP DEFAULT now(),
-                    updated_at TIMESTAMP DEFAULT now()
-                )
-                """
-            )
-        )
-        conn.execute(
-            sa.text(
-                """
-                CREATE TABLE IF NOT EXISTS subscriptions (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    expires_at TIMESTAMP,
-                    active BOOLEAN DEFAULT TRUE,
-                    created_at TIMESTAMP DEFAULT now(),
-                    updated_at TIMESTAMP DEFAULT now(),
-                    cancel_requested BOOLEAN DEFAULT FALSE,
-                    cancel_requested_at TIMESTAMP,
-                    anchor_inv_id BIGINT,
-                    next_charge_at TIMESTAMP,
-                    pending_inv_id BIGINT,
-                    pending_amount NUMERIC,
-                    pending_created_at TIMESTAMP
-                )
-                """
-            )
-        )
-        conn.execute(
-            sa.text(
-                """
-                CREATE TABLE IF NOT EXISTS payments (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    inv_id BIGINT NOT NULL UNIQUE,
-                    amount NUMERIC NOT NULL,
-                    currency VARCHAR(10) DEFAULT 'KZT',
-                    status VARCHAR(20) DEFAULT 'paid',
-                    raw_payload JSONB,
-                    created_at TIMESTAMP DEFAULT now()
-                )
-                """
-            )
-        )
-        conn.execute(
-            sa.text(
-                """
-                CREATE TABLE IF NOT EXISTS questions (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    text TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT now()
-                )
-                """
-            )
-        )
-
     def init_database(self):
-        """Создание таблиц (если нет), проверка подключения и добавление недостающих колонок."""
+        """Проверка подключения и добавление недостающих колонок."""
         try:
             with self.engine.begin() as conn:
-                self._create_tables(conn)
                 conn.execute(sa.text("SELECT 1"))
                 # Колонки для отметки отключения автоплатежа
                 conn.execute(
@@ -227,8 +137,6 @@ class Database:
         next_charge_at: Optional[datetime] = None,
     ):
         """Создать/обновить подписку и пользователя."""
-        if next_charge_at is None:
-            next_charge_at = expires_at
         with self.Session() as s, s.begin():
             s.execute(
                 sa.text(
@@ -292,15 +200,15 @@ class Database:
             if row:
                 return {
                     "user_id": row["user_id"],
-                    "expires_at": self._to_local_aware(row["expires_at"]),
+                    "expires_at": row["expires_at"],
                     "active": row["active"],
                     "cancel_requested": row["cancel_requested"],
-                    "cancel_requested_at": self._to_local_aware(row["cancel_requested_at"]),
+                    "cancel_requested_at": row["cancel_requested_at"],
                     "anchor_inv_id": row.get("anchor_inv_id"),
-                    "next_charge_at": self._to_local_aware(row.get("next_charge_at")),
+                    "next_charge_at": row.get("next_charge_at"),
                     "pending_inv_id": row.get("pending_inv_id"),
                     "pending_amount": row.get("pending_amount"),
-                    "pending_created_at": self._to_local_aware(row.get("pending_created_at")),
+                    "pending_created_at": row.get("pending_created_at"),
                 }
         return None
 
@@ -339,12 +247,7 @@ class Database:
                 .mappings()
                 .all()
             )
-            items = [dict(r) for r in rows]
-            for it in items:
-                it["expires_at"] = self._to_local_aware(it.get("expires_at"))
-                it["next_charge_at"] = self._to_local_aware(it.get("next_charge_at"))
-                it["pending_created_at"] = self._to_local_aware(it.get("pending_created_at"))
-            return items
+            return [dict(r) for r in rows]
 
     def deactivate_subscription(self, user_id: int):
         """Деактивировать подписку пользователя."""
@@ -369,8 +272,6 @@ class Database:
         anchor_inv_id: Optional[int] = None,
     ):
         """Обновить сроки активной подписки пользователя."""
-        if next_charge_at is None:
-            next_charge_at = expires_at
         with self.Session() as s, s.begin():
             s.execute(
                 sa.text(
@@ -437,26 +338,17 @@ class Database:
 
         return result
 
-    def clear_cancel_requested(self, user_id: int):
-        """Сбросить флаг отключения автоплатежа после успешной оплаты."""
-        with self.Session() as s, s.begin():
-            s.execute(
-                sa.text(
-                    """
-                    UPDATE subscriptions
-                    SET cancel_requested = FALSE,
-                        cancel_requested_at = NULL,
-                        updated_at = now()
-                    WHERE user_id = :uid AND active = TRUE
-                    """
-                ),
-                {"uid": user_id},
-            )
-        logger.info("cancel_requested сброшен для пользователя %s", user_id)
-
     # -------------------
     # Платежи
     # -------------------
+    @staticmethod
+    def _extract_inv_id(invoice_payload: str) -> Optional[int]:
+        """Пытаемся вытащить числовой inv_id из строки payload."""
+        if not invoice_payload:
+            return None
+        match = re.search(r"(\d+)", invoice_payload)
+        return int(match.group(1)) if match else None
+
     def payment_exists(self, inv_id: int) -> bool:
         """Проверить, есть ли уже платёж с этим inv_id."""
         with self.Session() as s:
@@ -527,40 +419,6 @@ class Database:
                 {"uid": user_id},
             )
         logger.info("Pending charge cleared: user=%s", user_id)
-
-    def confirm_pending_charge(
-        self,
-        user_id: int,
-        expires_at: datetime,
-        next_charge_at: datetime,
-        anchor_inv_id: Optional[int] = None,
-    ):
-        """Подтвердить pending-платёж: очистить pending и продлить подписку."""
-        if next_charge_at is None:
-            next_charge_at = expires_at
-        with self.Session() as s, s.begin():
-            s.execute(
-                sa.text(
-                    """
-                    UPDATE subscriptions
-                    SET expires_at = :exp,
-                        next_charge_at = :next_charge,
-                        anchor_inv_id = COALESCE(:anchor, anchor_inv_id),
-                        pending_inv_id = NULL,
-                        pending_amount = NULL,
-                        pending_created_at = NULL,
-                        updated_at = now()
-                    WHERE user_id = :uid AND active = TRUE
-                    """
-                ),
-                {
-                    "uid": user_id,
-                    "exp": expires_at,
-                    "next_charge": next_charge_at,
-                    "anchor": anchor_inv_id,
-                },
-            )
-        logger.info("Pending charge confirmed and subscription extended for user=%s", user_id)
 
     # -------------------
     # Статистика

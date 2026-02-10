@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   telegram_sales:
     build: .
@@ -5,40 +7,35 @@ services:
     env_file:
       - .env
     environment:
+      # Если в .env не задать DATABASE_URL, используем подключение к внутреннему Postgres
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://${POSTGRES_USER:-korkut}:${POSTGRES_PASSWORD:-Aman123!}@db:5432/${POSTGRES_DB:-telegram_sales}}
       PYTHONUNBUFFERED: "1"
     restart: unless-stopped
     depends_on:
-      db:
-        condition: service_healthy
+      - db
     ports:
-      - "127.0.0.1:8000:8000"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+      - "8000:8000" # webhook FastAPI (Robokassa Result URL)
+    # При необходимости пробросить прокси/сетевые настройки:
+    # networks:
+    #   - default
 
   db:
     image: postgres:15
     container_name: telegram_sales_db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-korkut}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Aman123!}
+      POSTGRES_USER: ${POSTGRES_USER:-telegram_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telegram_password}
       POSTGRES_DB: ${POSTGRES_DB:-telegram_sales}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h 127.0.0.1 -p 5432"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    # networks:
+    #   - default
 
 volumes:
   pgdata:
+
+# networks:
+#   default:
+#     driver: bridge
+
