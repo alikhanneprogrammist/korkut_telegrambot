@@ -18,6 +18,7 @@ import pytz
 import httpx
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import NetworkError, RetryAfter, TimedOut
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -1608,6 +1609,22 @@ async def manual_check_subscriptions(update: Update, context: ContextTypes.DEFAU
     await update.message.reply_text("✅ Проверка завершена!")
 
 
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Глобальный обработчик ошибок Telegram API/сети."""
+    err = context.error
+
+    # Краткие предупреждения вместо длинных traceback для временных сетевых сбоев polling.
+    if isinstance(err, (NetworkError, TimedOut)):
+        logger.warning("Telegram network issue: %s", err)
+        return
+
+    if isinstance(err, RetryAfter):
+        logger.warning("Telegram rate limit, retry after: %s sec", err.retry_after)
+        return
+
+    logger.exception("Unhandled bot error: %s", err)
+
+
 # =====================================================
 # ЗАПУСК БОТА
 # =====================================================
@@ -1701,10 +1718,20 @@ def main():
     
     # Обработка любых текстовых сообщений как вопросов (БЛОК ВОПРОСЫ)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_message))
+    application.add_error_handler(global_error_handler)
     
     logger.info("🤖 Бот запущен и готов к работе!")
     
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        poll_interval=1.0,
+        timeout=30,
+        read_timeout=60,
+        write_timeout=30,
+        connect_timeout=20,
+        pool_timeout=20,
+        drop_pending_updates=False,
+    )
 
 
 if __name__ == '__main__':
