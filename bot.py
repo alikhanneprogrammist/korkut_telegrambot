@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import hashlib
 import urllib.parse
@@ -701,6 +702,11 @@ def main():
     )
 
     logger.info("🤖 Бот запущен и готов к работе!")
+
+    # Явная инициализация до polling (нужно при запуске в одном контейнере с uvicorn)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(application.initialize())
 
     # ✅ FIX: не слушаем ALL_TYPES, только нужные
     application.run_polling(
