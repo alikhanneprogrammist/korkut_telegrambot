@@ -18,7 +18,7 @@ import pytz
 import httpx
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.error import NetworkError, RetryAfter, TimedOut
+from telegram.error import Conflict, NetworkError, RetryAfter, TimedOut
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -234,6 +234,15 @@ def init_robokassa() -> Optional[Robokassa]:
 def _now_for(dt: datetime) -> datetime:
     """Текущее время с учётом tzinfo dt (если есть)."""
     return datetime.now(dt.tzinfo) if getattr(dt, "tzinfo", None) else datetime.now()
+
+
+def _to_local_naive(dt: datetime) -> datetime:
+    """Привести datetime к локальному наивному формату для безопасных сравнений."""
+    if dt is None:
+        return dt
+    if getattr(dt, "tzinfo", None):
+        return dt.astimezone(TIMEZONE).replace(tzinfo=None)
+    return dt
 
 
 def is_subscription_active(subscription: Optional[dict]) -> bool:
@@ -572,6 +581,9 @@ async def funnel_want(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """3. БЛОК «ВОПРОСЫ» - обработка любого текстового сообщения как вопроса"""
     user = update.effective_user
+    if not user:
+        logger.warning("Сообщение без effective_user, update_id=%s", getattr(update, "update_id", None))
+        return
     
     # Проверяем, есть ли активная подписка
     subscription = db.get_subscription(user.id)
@@ -1392,7 +1404,7 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
     - если OK: ставим pending_inv_id и ждём ResultURL
     - пока pending есть — не создаём новые попытки
     """
-    now_local = datetime.now(TIMEZONE)
+    now_local = datetime.now(TIMEZONE).replace(tzinfo=None)
     subs = db.get_all_active_subscriptions()
     for sub in subs:
         if sub.get("cancel_requested"):
@@ -1401,7 +1413,8 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
         anchor_inv_id = sub.get("anchor_inv_id")
         if not next_charge_at or not anchor_inv_id:
             continue
-        if next_charge_at > now_local:
+        next_charge_cmp = _to_local_naive(next_charge_at)
+        if next_charge_cmp > now_local:
             continue
 
         user_id = sub["user_id"]
@@ -1612,6 +1625,13 @@ async def manual_check_subscriptions(update: Update, context: ContextTypes.DEFAU
 async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Глобальный обработчик ошибок Telegram API/сети."""
     err = context.error
+
+    if isinstance(err, Conflict):
+        logger.error(
+            "Telegram polling conflict: запущено несколько инстансов бота "
+            "(terminated by other getUpdates request)."
+        )
+        return
 
     # Краткие предупреждения вместо длинных traceback для временных сетевых сбоев polling.
     if isinstance(err, (NetworkError, TimedOut)):
