@@ -1,15 +1,22 @@
 import asyncio
 import os
 import sys
+from pathlib import Path
 
+from dotenv import load_dotenv
 from telegram import Bot
+
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
 
 async def main():
     """
     Одноразовый скрипт для кика и мгновенного разбана пользователя.
-    Требуются переменные окружения TELEGRAM_TOKEN и CHANNEL_ID.
-    Пример: USER_ID=382728138 python kick_user.py
+    Требуются TELEGRAM_TOKEN, CHANNEL_ID и USER_ID.
+
+    Пример запуска:
+        USER_ID=382728138 python kick_user.py
     """
     token = os.getenv("TELEGRAM_TOKEN")
     channel_id = os.getenv("CHANNEL_ID")
@@ -32,13 +39,16 @@ async def main():
 
     bot = Bot(token=token)
 
-    # Кик + мгновенный разбан, чтобы пользователь мог вернуться после повторного приглашения
-    await bot.ban_chat_member(chat_id=channel_id, user_id=user_id)
-    await bot.unban_chat_member(chat_id=channel_id, user_id=user_id)
-
-    print(f"Готово: пользователь {user_id} кикнут и разбанен в канале {channel_id}")
+    try:
+        await bot.ban_chat_member(chat_id=channel_id, user_id=user_id)
+        await bot.unban_chat_member(chat_id=channel_id, user_id=user_id)
+        print(f"Готово: пользователь {user_id} кикнут и разбанен в канале {channel_id}")
+    except Exception as e:
+        print(f"Ошибка при кике/разбане пользователя {user_id}: {e}")
+        sys.exit(1)
+    finally:
+        await bot.session.close()
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-

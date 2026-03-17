@@ -23,11 +23,11 @@ class Database:
         self.Session = sessionmaker(self.engine, expire_on_commit=False, future=True)
 
     def init_database(self):
-        """Проверка подключения и добавление недостающих колонок."""
+        """Проверка подключения и добавление недостающих колонок/индексов."""
         try:
             with self.engine.begin() as conn:
                 conn.execute(sa.text("SELECT 1"))
-                # Колонки для отметки отключения автоплатежа
+
                 conn.execute(
                     sa.text(
                         """
@@ -84,6 +84,18 @@ class Database:
                         """
                     )
                 )
+
+                # Полезный индекс для защиты от дублей по inv_id
+                conn.execute(
+                    sa.text(
+                        """
+                        CREATE UNIQUE INDEX IF NOT EXISTS ux_payments_inv_id
+                        ON payments (inv_id)
+                        WHERE inv_id IS NOT NULL
+                        """
+                    )
+                )
+
             logger.info("Подключено к Postgres")
         except Exception as e:
             logger.error(f"Не удалось подключиться к Postgres: {e}")
@@ -108,7 +120,7 @@ class Database:
                 ),
                 {"uid": user_id, "uname": username, "state": state},
             )
-        logger.info(f"Состояние пользователя {user_id} обновлено: {state}")
+        logger.info("Состояние пользователя %s обновлено: %s", user_id, state)
 
     def save_user_question(self, user_id: int, question: str):
         """Сохранить вопрос пользователя."""
@@ -122,7 +134,7 @@ class Database:
                 ),
                 {"uid": user_id, "txt": question},
             )
-        logger.info(f"Вопрос пользователя {user_id} сохранён")
+        logger.info("Вопрос пользователя %s сохранён", user_id)
 
     # -------------------
     # Подписки
@@ -150,7 +162,7 @@ class Database:
                 ),
                 {"uid": user_id, "uname": username},
             )
-            # деактивируем предыдущие активные, чтобы была единственная активная подписка
+
             s.execute(
                 sa.text(
                     """
@@ -161,11 +173,38 @@ class Database:
                 ),
                 {"uid": user_id},
             )
+
             s.execute(
                 sa.text(
                     """
-                    INSERT INTO subscriptions (user_id, expires_at, active, created_at, updated_at, anchor_inv_id, next_charge_at)
-                    VALUES (:uid, :exp, TRUE, now(), now(), :anchor, :next_charge)
+                    INSERT INTO subscriptions (
+                        user_id,
+                        expires_at,
+                        active,
+                        created_at,
+                        updated_at,
+                        anchor_inv_id,
+                        next_charge_at,
+                        cancel_requested,
+                        cancel_requested_at,
+                        pending_inv_id,
+                        pending_amount,
+                        pending_created_at
+                    )
+                    VALUES (
+                        :uid,
+                        :exp,
+                        TRUE,
+                        now(),
+                        now(),
+                        :anchor,
+                        :next_charge,
+                        FALSE,
+                        NULL,
+                        NULL,
+                        NULL,
+                        NULL
+                    )
                     """
                 ),
                 {
@@ -175,7 +214,7 @@ class Database:
                     "next_charge": next_charge_at,
                 },
             )
-        logger.info(f"Подписка создана/обновлена для пользователя {user_id}")
+        logger.info("Подписка создана/обновлена для пользователя %s", user_id)
 
     def get_subscription(self, user_id: int) -> Optional[Dict[str, Any]]:
         """Получить активную подписку пользователя (самую свежую)."""
@@ -184,8 +223,8 @@ class Database:
                 s.execute(
                     sa.text(
                         """
-                        SELECT user_id, expires_at, active, cancel_requested, cancel_requested_at, anchor_inv_id, next_charge_at,
-                               pending_inv_id, pending_amount, pending_created_at
+                        SELECT user_id, expires_at, active, cancel_requested, cancel_requested_at,
+                               anchor_inv_id, next_charge_at, pending_inv_id, pending_amount, pending_created_at
                         FROM subscriptions
                         WHERE user_id = :uid AND active = TRUE
                         ORDER BY expires_at DESC
@@ -197,6 +236,7 @@ class Database:
                 .mappings()
                 .first()
             )
+
             if row:
                 return {
                     "user_id": row["user_id"],
@@ -219,9 +259,12 @@ class Database:
                 s.execute(
                     sa.text(
                         """
-                        SELECT user_id, expires_at
-                        FROM subscriptions
-                        WHERE active = TRUE AND expires_at < now()
+                        SELECT s.user_id, s.expires_at, u.username,
+                               s.cancel_requested, s.anchor_inv_id, s.next_charge_at,
+                               s.pending_inv_id, s.pending_amount, s.pending_created_at
+                        FROM subscriptions s
+                        LEFT JOIN users u ON u.user_id = s.user_id
+                        WHERE s.active = TRUE AND s.expires_at < now()
                         """
                     )
                 )
@@ -231,16 +274,44 @@ class Database:
             return [dict(r) for r in rows]
 
     def get_all_active_subscriptions(self) -> List[Dict[str, Any]]:
-        """Все активные подписки (для проверки истечения)."""
+        """Все активные подписки."""
         with self.Session() as s:
             rows = (
                 s.execute(
                     sa.text(
                         """
-                        SELECT user_id, expires_at, cancel_requested, anchor_inv_id, next_charge_at,
-                               pending_inv_id, pending_amount, pending_created_at
-                        FROM subscriptions
-                        WHERE active = TRUE
+                        SELECT s.user_id, u.username, s.expires_at, s.cancel_requested,
+                               s.anchor_inv_id, s.next_charge_at,
+                               s.pending_inv_id, s.pending_amount, s.pending_created_at
+                        FROM subscriptions s
+                        LEFT JOIN users u ON u.user_id = s.user_id
+                        WHERE s.active = TRUE
+                        """
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            return [dict(r) for r in rows]
+
+    def get_recurring_candidates(self) -> List[Dict[str, Any]]:
+        """
+        Кандидаты для логики автосписаний.
+        Берём все активные подписки с anchor_inv_id и без отключённого автоплатежа.
+        """
+        with self.Session() as s:
+            rows = (
+                s.execute(
+                    sa.text(
+                        """
+                        SELECT s.user_id, u.username, s.expires_at, s.cancel_requested,
+                               s.cancel_requested_at, s.anchor_inv_id, s.next_charge_at,
+                               s.pending_inv_id, s.pending_amount, s.pending_created_at
+                        FROM subscriptions s
+                        LEFT JOIN users u ON u.user_id = s.user_id
+                        WHERE s.active = TRUE
+                          AND COALESCE(s.cancel_requested, FALSE) = FALSE
+                          AND s.anchor_inv_id IS NOT NULL
                         """
                     )
                 )
@@ -262,7 +333,7 @@ class Database:
                 ),
                 {"uid": user_id},
             )
-        logger.info(f"Подписка деактивирована для пользователя {user_id}")
+        logger.info("Подписка деактивирована для пользователя %s", user_id)
 
     def renew_subscription(
         self,
@@ -271,7 +342,10 @@ class Database:
         next_charge_at: Optional[datetime],
         anchor_inv_id: Optional[int] = None,
     ):
-        """Обновить сроки активной подписки пользователя."""
+        """
+        Обновить сроки активной подписки пользователя.
+        Использовать ТОЛЬКО после подтверждённой оплаты.
+        """
         with self.Session() as s, s.begin():
             s.execute(
                 sa.text(
@@ -291,7 +365,37 @@ class Database:
                     "anchor": anchor_inv_id,
                 },
             )
-        logger.info(f"Подписка обновлена для пользователя {user_id}")
+        logger.info("Подписка обновлена для пользователя %s", user_id)
+
+    def update_charge_schedule(
+        self,
+        user_id: int,
+        *,
+        next_charge_at: Optional[datetime],
+        anchor_inv_id: Optional[int] = None,
+    ):
+        """
+        Обновить только график списания, не меняя expires_at.
+        Использовать для pending / повторных попыток recurring.
+        """
+        with self.Session() as s, s.begin():
+            s.execute(
+                sa.text(
+                    """
+                    UPDATE subscriptions
+                    SET next_charge_at = :next_charge,
+                        anchor_inv_id = COALESCE(:anchor, anchor_inv_id),
+                        updated_at = now()
+                    WHERE user_id = :uid AND active = TRUE
+                    """
+                ),
+                {
+                    "uid": user_id,
+                    "next_charge": next_charge_at,
+                    "anchor": anchor_inv_id,
+                },
+            )
+        logger.info("График списания обновлён для пользователя %s", user_id)
 
     def request_cancel_subscription(self, user_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -377,11 +481,12 @@ class Database:
                     """
                     INSERT INTO payments (user_id, inv_id, amount, currency, status, raw_payload, created_at)
                     VALUES (:uid, :inv, :amt, :cur, 'paid', CAST(:rawp AS jsonb), now())
+                    ON CONFLICT (inv_id) DO NOTHING
                     """
                 ),
                 {"uid": user_id, "inv": inv, "amt": amount, "cur": currency, "rawp": raw_json},
             )
-        logger.info(f"Платёж записан: user={user_id}, inv_id={inv}, amount={amount} {currency}")
+        logger.info("Платёж записан: user=%s, inv_id=%s, amount=%s %s", user_id, inv, amount, currency)
 
     # -------------------
     # Pending recurring
@@ -455,4 +560,3 @@ class Database:
     def close(self):
         """Закрыть соединение."""
         self.engine.dispose()
-
