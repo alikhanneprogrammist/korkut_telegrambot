@@ -50,6 +50,12 @@ SUBSCRIPTION_PRICE = int(os.getenv('SUBSCRIPTION_PRICE', '20000'))
 # Период продления подписки (в днях), для автосписаний
 RENEWAL_PERIOD_DAYS = int(os.getenv('RENEWAL_PERIOD_DAYS', '30'))
 
+# За сколько дней до окончания пытаться списать оплату
+RECURRING_LEAD_DAYS = int(os.getenv('RECURRING_LEAD_DAYS', '1'))
+
+# Сколько дней пытаться повторять списание при ошибке
+RECURRING_RETRY_DAYS = int(os.getenv('RECURRING_RETRY_DAYS', '1'))
+
 # === Postgres ===
 # Строка подключения к БД, например:
 # postgresql+psycopg2://telegram_user:password@localhost:5432/telegram_sales
