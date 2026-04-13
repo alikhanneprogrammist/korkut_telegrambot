@@ -1417,12 +1417,29 @@ async def check_expired_subscriptions(context: ContextTypes.DEFAULT_TYPE):
 
             if expires_at <= now_local:
                 if sub.get("pending_inv_id"):
-                    logger.info(
-                        "Expired but pending exists, skip kick: user=%s pending_inv_id=%s",
+                    pending_created_at = _to_local_naive(sub.get("pending_created_at"))
+                    pending_is_fresh = (
+                        pending_created_at is not None
+                        and (now_local - pending_created_at) <= RECURRING_RETRY_DELAY
+                    )
+
+                    if pending_is_fresh:
+                        logger.info(
+                            "Expired but fresh pending exists, skip kick: user=%s pending_inv_id=%s pending_created_at=%s",
+                            user_id,
+                            sub.get("pending_inv_id"),
+                            pending_created_at,
+                        )
+                        continue
+
+                    # Pending завис: очищаем блокировку кика и исключаем пользователя.
+                    db.clear_pending_charge(user_id)
+                    logger.warning(
+                        "Expired with stale pending, clearing pending and kicking user=%s pending_inv_id=%s pending_created_at=%s",
                         user_id,
                         sub.get("pending_inv_id"),
+                        pending_created_at,
                     )
-                    continue
 
                 await kick_user_from_channel(context, user_id, username)
                 kicked_count += 1
