@@ -48,6 +48,7 @@ from config import (
     RENEWAL_PERIOD_DAYS,
     RECURRING_LEAD_DAYS,
     RECURRING_RETRY_DAYS,
+    RECURRING_MAX_FAILURES,
 )
 
 # Ссылка на договор оферты
@@ -1305,6 +1306,7 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
             continue
 
         user_id = sub["user_id"]
+        username = sub.get("username", "Пользователь")
         anchor_inv_id = sub.get("anchor_inv_id")
         expires_at = _to_local_naive(sub.get("expires_at"))
         next_charge_at = _to_local_naive(sub.get("next_charge_at"))
@@ -1361,15 +1363,18 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
                 new_inv_id,
             )
         else:
+            failures = db.increment_recurring_failures(user_id)
             logger.warning(
-                "Recurring failed: user=%s anchor=%s error=%s",
+                "Recurring failed: user=%s anchor=%s failures=%s error=%s",
                 user_id,
                 anchor_inv_id,
+                failures,
                 error,
             )
 
             warn_text = (
                 "❌ Не удалось выполнить автосписание.\n"
+                f"Попытка {failures} из {RECURRING_MAX_FAILURES}.\n"
                 "Попробуйте оплатить вручную через кнопку ниже."
             )
             keyboard = [[InlineKeyboardButton("Оплатить", callback_data="funnel_offer_agreement")]]
@@ -1388,10 +1393,32 @@ async def process_recurring_charges(context: ContextTypes.DEFAULT_TYPE):
                     try:
                         await context.bot.send_message(
                             chat_id=admin_id,
-                            text=f"❌ Автосписание не удалось: user={user_id}, err={error}",
+                            text=(
+                                "❌ Автосписание не удалось: "
+                                f"user={user_id}, attempt={failures}/{RECURRING_MAX_FAILURES}, err={error}"
+                            ),
                         )
                     except Exception:
                         pass
+
+            if failures >= RECURRING_MAX_FAILURES:
+                db.clear_pending_charge(user_id)
+                db.deactivate_subscription(user_id)
+                await kick_user_from_channel(context, user_id, username)
+
+                if ADMIN_SET or ADMIN_ID:
+                    for admin_id in (ADMIN_SET or {ADMIN_ID}):
+                        try:
+                            await context.bot.send_message(
+                                chat_id=admin_id,
+                                text=(
+                                    f"🚫 Пользователь исключен после {failures} неудачных автосписаний: "
+                                    f"user={user_id}"
+                                ),
+                            )
+                        except Exception:
+                            pass
+                continue
 
             db.update_charge_schedule(
                 user_id=user_id,

@@ -84,6 +84,14 @@ class Database:
                         """
                     )
                 )
+                conn.execute(
+                    sa.text(
+                        """
+                        ALTER TABLE subscriptions
+                        ADD COLUMN IF NOT EXISTS recurring_failure_count INTEGER DEFAULT 0
+                        """
+                    )
+                )
 
                 # Полезный индекс для защиты от дублей по inv_id
                 conn.execute(
@@ -189,7 +197,8 @@ class Database:
                         cancel_requested_at,
                         pending_inv_id,
                         pending_amount,
-                        pending_created_at
+                        pending_created_at,
+                        recurring_failure_count
                     )
                     VALUES (
                         :uid,
@@ -203,7 +212,8 @@ class Database:
                         NULL,
                         NULL,
                         NULL,
-                        NULL
+                        NULL,
+                        0
                     )
                     """
                 ),
@@ -224,7 +234,8 @@ class Database:
                     sa.text(
                         """
                         SELECT user_id, expires_at, active, cancel_requested, cancel_requested_at,
-                               anchor_inv_id, next_charge_at, pending_inv_id, pending_amount, pending_created_at
+                               anchor_inv_id, next_charge_at, pending_inv_id, pending_amount, pending_created_at,
+                               recurring_failure_count
                         FROM subscriptions
                         WHERE user_id = :uid AND active = TRUE
                         ORDER BY expires_at DESC
@@ -249,6 +260,7 @@ class Database:
                     "pending_inv_id": row.get("pending_inv_id"),
                     "pending_amount": row.get("pending_amount"),
                     "pending_created_at": row.get("pending_created_at"),
+                    "recurring_failure_count": row.get("recurring_failure_count") or 0,
                 }
         return None
 
@@ -282,7 +294,8 @@ class Database:
                         """
                         SELECT s.user_id, u.username, s.expires_at, s.cancel_requested,
                                s.anchor_inv_id, s.next_charge_at,
-                               s.pending_inv_id, s.pending_amount, s.pending_created_at
+                               s.pending_inv_id, s.pending_amount, s.pending_created_at,
+                               s.recurring_failure_count
                         FROM subscriptions s
                         LEFT JOIN users u ON u.user_id = s.user_id
                         WHERE s.active = TRUE
@@ -306,7 +319,8 @@ class Database:
                         """
                         SELECT s.user_id, u.username, s.expires_at, s.cancel_requested,
                                s.cancel_requested_at, s.anchor_inv_id, s.next_charge_at,
-                               s.pending_inv_id, s.pending_amount, s.pending_created_at
+                               s.pending_inv_id, s.pending_amount, s.pending_created_at,
+                               s.recurring_failure_count
                         FROM subscriptions s
                         LEFT JOIN users u ON u.user_id = s.user_id
                         WHERE s.active = TRUE
@@ -354,6 +368,7 @@ class Database:
                     SET expires_at = :exp,
                         next_charge_at = :next_charge,
                         anchor_inv_id = COALESCE(:anchor, anchor_inv_id),
+                        recurring_failure_count = 0,
                         updated_at = now()
                     WHERE user_id = :uid AND active = TRUE
                     """
@@ -524,6 +539,27 @@ class Database:
                 {"uid": user_id},
             )
         logger.info("Pending charge cleared: user=%s", user_id)
+
+    def increment_recurring_failures(self, user_id: int) -> int:
+        """Увеличить счётчик подряд неудачных автосписаний и вернуть новое значение."""
+        with self.Session() as s, s.begin():
+            row = (
+                s.execute(
+                    sa.text(
+                        """
+                        UPDATE subscriptions
+                        SET recurring_failure_count = COALESCE(recurring_failure_count, 0) + 1,
+                            updated_at = now()
+                        WHERE user_id = :uid AND active = TRUE
+                        RETURNING recurring_failure_count
+                        """
+                    ),
+                    {"uid": user_id},
+                )
+                .mappings()
+                .first()
+            )
+        return int((row or {}).get("recurring_failure_count") or 0)
 
     # -------------------
     # Статистика

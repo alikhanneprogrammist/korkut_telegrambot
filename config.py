@@ -56,6 +56,9 @@ RECURRING_LEAD_DAYS = int(os.getenv('RECURRING_LEAD_DAYS', '1'))
 # Сколько дней пытаться повторять списание при ошибке
 RECURRING_RETRY_DAYS = int(os.getenv('RECURRING_RETRY_DAYS', '1'))
 
+# Максимум подряд неудачных автосписаний перед исключением из канала
+RECURRING_MAX_FAILURES = int(os.getenv('RECURRING_MAX_FAILURES', '3'))
+
 # === Postgres ===
 # Строка подключения к БД, например:
 # postgresql+psycopg2://telegram_user:password@localhost:5432/telegram_sales
